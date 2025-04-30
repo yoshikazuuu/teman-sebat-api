@@ -11,7 +11,7 @@ import {
     sessionResponses,
     deviceTokens,
 } from "../db/schema";
-import { jwtMiddleware } from "./auth";
+import { jwtMiddleware } from "../lib/auth";
 
 // Define validation schemas
 const responseSchema = z.object({

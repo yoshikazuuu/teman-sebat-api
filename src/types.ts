@@ -1,18 +1,18 @@
 // src/types.ts
 import { Context as HonoContext } from "hono";
 import { DB } from "./db";
-import { JwtVariables } from "hono/jwt";
 
 // Define the complete application environment
 export type AppEnv = {
     Bindings: {
         DB: D1Database;
         JWT_SECRET: string;
+        APPLE_BUNDLE_ID: string; // Add Apple Bundle ID
     };
     Variables: {
         db: DB;
         jwtPayload: {
-            id: number;
+            id: number; // Your internal user ID
             exp: number;
             [key: string]: any;
         };

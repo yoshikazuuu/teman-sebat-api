@@ -27,6 +27,43 @@ app.use(
   }),
 );
 
+// --- Request Body Logging Middleware ---
+app.use("*", async (c, next) => {
+  if (c.req.method === "POST") {
+    try {
+      // Read the body and log it
+      const contentType = c.req.header("Content-Type");
+
+      // Store original body parser result
+      let body;
+      if (contentType?.includes("application/json")) {
+        // Create a copy of the request to avoid consuming the body
+        const reqCopy = new Request(c.req.raw.url, {
+          method: c.req.method,
+          headers: c.req.raw.headers,
+          body: c.req.raw.clone().body
+        });
+
+        body = await reqCopy.json();
+      } else {
+        // For non-JSON content types
+        const reqCopy = new Request(c.req.raw.url, {
+          method: c.req.method,
+          headers: c.req.raw.headers,
+          body: c.req.raw.clone().body
+        });
+
+        body = await reqCopy.text();
+      }
+
+      console.log(`[${c.req.method}] ${c.req.url} - Request Body:`, body);
+    } catch (err) {
+      console.log(`[${c.req.method}] ${c.req.url} - Failed to log request body:`, err);
+    }
+  }
+  await next();
+});
+
 // --- Database Middleware ---
 // Attach the Drizzle client instance to the context (c.var.db)
 // for easy access in route handlers.

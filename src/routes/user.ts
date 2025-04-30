@@ -5,7 +5,7 @@ import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
 import { AppEnv } from "../types";
 import { users, deviceTokens } from "../db/schema";
-import { jwtMiddleware } from "./auth";
+import { jwtMiddleware } from "../lib/auth";
 
 // Define validation schemas
 const deviceTokenSchema = z.object({

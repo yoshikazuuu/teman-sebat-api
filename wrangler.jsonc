@@ -6,9 +6,9 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  // "vars": {
-  //   "JWT_SECRET": "your-secret-jwt-key-replace-in-production"
-  // },
+  "vars": {
+    "APPLE_BUNDLE_ID": "com.yoshi.TemanSebat",
+  },
   // "kv_namespaces": [
   //   {
   //     "binding": "MY_KV_NAMESPACE",

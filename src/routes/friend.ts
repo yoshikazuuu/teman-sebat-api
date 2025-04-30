@@ -5,7 +5,7 @@ import { z } from "zod";
 import { and, eq, or, sql } from "drizzle-orm";
 import { AppEnv } from "../types";
 import { users, friendships } from "../db/schema";
-import { jwtMiddleware } from "./auth";
+import { jwtMiddleware } from "../lib/auth";
 
 // Define validation schemas
 const friendRequestSchema = z.object({
