@@ -301,11 +301,12 @@ app.post(
 app.post("/accept/:requestId", jwtMiddleware, async (c) => {
     const userId = c.get("jwtPayload").id;
     const requestId = c.req.param("requestId");
-    // Assuming requestId format is "user1Id-user2Id" where user1Id < user2Id
-    // Or it could be "requesterId-recipientId" - let's assume the latter for now
-    const [requesterIdStr, recipientIdStr] = requestId.split("-");
+    const [recipientIdStr, requesterIdStr] = requestId.split("-");
     const requesterId = parseInt(requesterIdStr, 10);
     const recipientId = parseInt(recipientIdStr, 10);
+
+    console.log(requesterId, recipientId, userId);
+
 
     // Validate the recipient is the current user
     if (isNaN(requesterId) || isNaN(recipientId) || recipientId !== userId) {
