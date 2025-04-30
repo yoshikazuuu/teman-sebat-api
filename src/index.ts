@@ -1,11 +1,11 @@
-import { Env, Hono } from "hono";
+import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { createDbClient, DB } from "./db";
-import { Environment } from "../bindings";
+import { createDbClient } from "./db";
+import { AppEnv } from "./types";
 
 // Create the Hono app instance, specifying the Env type
-const app = new Hono<Environment>();
+const app = new Hono<AppEnv>();
 
 // --- Middleware ---
 app.use("*", logger()); // Log all requests
@@ -32,16 +32,6 @@ app.use("*", async (c, next) => {
   c.set("db", db)
   await next();
 });
-
-// --- Type helper for context with DB ---
-// This makes it easier to type route handlers
-export type AppContext = typeof app extends Hono<
-  Environment,
-  any,
-  infer I
->
-  ? I & { Variables: { db: DB } }
-  : never;
 
 // --- Basic Routes ---
 app.get("/", (c) => {
