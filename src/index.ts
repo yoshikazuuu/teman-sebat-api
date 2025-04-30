@@ -4,6 +4,12 @@ import { logger } from "hono/logger";
 import { createDbClient } from "./db";
 import { AppEnv } from "./types";
 
+// Import route handlers
+import authRoutes from "./routes/auth";
+import userRoutes from "./routes/user";
+import friendRoutes from "./routes/friend";
+import smokingRoutes from "./routes/smoking";
+
 // Create the Hono app instance, specifying the Env type
 const app = new Hono<AppEnv>();
 
@@ -14,8 +20,10 @@ app.use(
   cors({
     // Configure CORS for your frontend URL in production
     origin: "*", // Allow all for now, restrict later
-    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
+    exposeHeaders: ["Content-Length", "X-Total-Count"],
+    maxAge: 600,
   }),
 );
 
@@ -27,6 +35,7 @@ app.use("*", async (c, next) => {
     console.error("D1 Database binding 'DB' not found in environment.");
     return c.json({ error: "Internal server error" }, 500);
   }
+
   const db = createDbClient(c.env.DB);
   // Use c.set to attach the db instance to the context
   c.set("db", db)
@@ -38,14 +47,11 @@ app.get("/", (c) => {
   return c.text("👋 Teman Sebat API is running!");
 });
 
-// --- TODO: Add Route Handlers ---
-// import authRoutes from './routes/auth';
-// import friendRoutes from './routes/friends';
-// import smokingRoutes from './routes/smoking';
-//
-// app.route('/auth', authRoutes);
-// app.route('/friends', friendRoutes);
-// app.route('/smoking', smokingRoutes);
+// --- Register Route Handlers ---
+app.route("/auth", authRoutes);
+app.route("/users", userRoutes);
+app.route("/friends", friendRoutes);
+app.route("/smoking", smokingRoutes);
 
 // --- Error Handling ---
 app.onError((err, c) => {

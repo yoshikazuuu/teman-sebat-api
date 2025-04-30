@@ -1,6 +1,7 @@
 // src/types.ts
 import { Context as HonoContext } from "hono";
 import { DB } from "./db";
+import { JwtVariables } from "hono/jwt";
 
 // Define the complete application environment
 export type AppEnv = {
@@ -10,6 +11,11 @@ export type AppEnv = {
     };
     Variables: {
         db: DB;
+        jwtPayload: {
+            id: number;
+            exp: number;
+            [key: string]: any;
+        };
     };
 };
 

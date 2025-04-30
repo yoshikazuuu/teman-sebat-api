@@ -16,7 +16,13 @@ export const users = sqliteTable(
         }),
         username: text("username").notNull().unique(),
         // Store hashed passwords, never plaintext
-        passwordHash: text("password_hash").notNull(),
+        passwordHash: text("password_hash"),
+        // Apple ID for Sign in with Apple
+        appleId: text("apple_id").unique(),
+        // User's full name (from Apple or manually entered)
+        fullName: text("full_name"),
+        // User's email (optional, from Apple or manually entered)
+        email: text("email").unique(),
         createdAt: integer("created_at", { mode: "timestamp" })
             .notNull()
             .default(sql`(unixepoch())`), // Use SQLite function for current timestamp
