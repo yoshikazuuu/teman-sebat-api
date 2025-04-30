@@ -78,22 +78,36 @@ export const smokingSessions = sqliteTable("smoking_sessions", {
 });
 
 // Session Responses Table
-export const sessionResponses = sqliteTable("session_responses", {
-    id: integer("id", { mode: "number" }).primaryKey({ autoIncrement: true }),
-    sessionId: integer("session_id", { mode: "number" })
-        .notNull()
-        .references(() => smokingSessions.id, { onDelete: "cascade" }),
-    responderId: integer("responder_id", { mode: "number" })
-        .notNull()
-        .references(() => users.id, { onDelete: "cascade" }),
-    // Response types: 'coming', 'done', 'coming_5'
-    responseType: text("response_type", {
-        enum: ["coming", "done", "coming_5"],
-    }).notNull(),
-    timestamp: integer("timestamp", { mode: "timestamp" })
-        .notNull()
-        .default(sql`(unixepoch())`),
-});
+export const sessionResponses = sqliteTable(
+    "session_responses",
+    {
+        id: integer("id", { mode: "number" }).primaryKey({
+            autoIncrement: true,
+        }),
+        sessionId: integer("session_id", { mode: "number" })
+            .notNull()
+            .references(() => smokingSessions.id, { onDelete: "cascade" }),
+        responderId: integer("responder_id", { mode: "number" })
+            .notNull()
+            .references(() => users.id, { onDelete: "cascade" }),
+        responseType: text("response_type", {
+            enum: ["coming", "done", "coming_5"],
+        }).notNull(),
+        timestamp: integer("timestamp", { mode: "timestamp" })
+            .notNull()
+            .default(sql`(unixepoch())`),
+    },
+    // Add this table constraints function
+    (table) => {
+        return {
+            // Define a unique constraint on the combination of sessionId and responderId
+            sessionResponderUnq: uniqueIndex("session_responder_unq").on(
+                table.sessionId,
+                table.responderId,
+            ),
+        };
+    },
+);
 
 // Device Tokens Table (for Push Notifications)
 export const deviceTokens = sqliteTable("device_tokens", {

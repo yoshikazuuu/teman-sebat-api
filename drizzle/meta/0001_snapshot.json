@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "aa121031-23a3-45bc-b590-9a9a38f5ec12",
-  "prevId": "00000000-0000-0000-0000-000000000000",
+  "id": "3670d296-c1a0-4003-bfb3-60a6540e56f6",
+  "prevId": "aa121031-23a3-45bc-b590-9a9a38f5ec12",
   "tables": {
     "device_tokens": {
       "name": "device_tokens",
@@ -187,7 +187,16 @@
           "default": "(unixepoch())"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "session_responder_unq": {
+          "name": "session_responder_unq",
+          "columns": [
+            "session_id",
+            "responder_id"
+          ],
+          "isUnique": true
+        }
+      },
       "foreignKeys": {
         "session_responses_session_id_smoking_sessions_id_fk": {
           "name": "session_responses_session_id_smoking_sessions_id_fk",

@@ -6,9 +6,9 @@
   "compatibility_flags": [
     "nodejs_compat"
   ],
-  "vars": {
-    "JWT_SECRET": "your-secret-jwt-key-replace-in-production"
-  },
+  // "vars": {
+  //   "JWT_SECRET": "your-secret-jwt-key-replace-in-production"
+  // },
   // "kv_namespaces": [
   //   {
   //     "binding": "MY_KV_NAMESPACE",

@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `session_responder_unq` ON `session_responses` (`session_id`,`responder_id`);
