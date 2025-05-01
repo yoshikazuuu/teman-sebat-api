@@ -7,7 +7,13 @@ export type AppEnv = {
     Bindings: {
         DB: D1Database;
         JWT_SECRET: string;
-        APPLE_BUNDLE_ID: string; // Add Apple Bundle ID
+        APPLE_BUNDLE_ID: string; // For Apple Sign In audience check
+
+        // --- APNS Configuration ---
+        APNS_KEY_ID: string; // Your APNS Auth Key ID
+        APNS_TEAM_ID: string; // Your Apple Developer Team ID
+        APNS_PRIVATE_KEY: string; // The content of your .p8 private key file
+        APNS_ENVIRONMENT: "development" | "production"; // 'development' for sandbox, 'production' for production
     };
     Variables: {
         db: DB;
@@ -16,6 +22,8 @@ export type AppEnv = {
             exp: number;
             [key: string]: any;
         };
+        // Optional: Cache the APNS token briefly if needed
+        apnsAuthToken?: { token: string; expires: number };
     };
 };
 

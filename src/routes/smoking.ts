@@ -12,6 +12,7 @@ import {
     deviceTokens,
 } from "../db/schema";
 import { jwtMiddleware } from "../lib/auth";
+import { notifyFriendsOfSession } from "../lib/apns";
 
 // Define validation schemas
 const responseSchema = z.object({
@@ -25,6 +26,7 @@ const app = new Hono<AppEnv>();
 app.post("/start", jwtMiddleware, async (c) => {
     const userId = c.get("jwtPayload").id;
     const db = c.get("db");
+    const env = c.env; // Get environment variables
 
     try {
         // Check if user already has an active session
@@ -51,14 +53,21 @@ app.post("/start", jwtMiddleware, async (c) => {
             .insert(smokingSessions)
             .values({
                 userId,
-                // Drizzle handles Date objects correctly for timestamp columns
                 startTime: new Date(),
             })
             .returning({ id: smokingSessions.id });
 
+        if (!result || result.length === 0) {
+            throw new Error("Failed to create smoking session record.");
+        }
         const sessionId = result[0].id;
 
-        // Get all friends to notify
+        // --- Notification Logic ---
+        let notificationSuccessCount = 0;
+        let notificationFailureCount = 0;
+        let friendsToNotifyCount = 0;
+
+        // Get all friends
         const friends = await db.query.friendships.findMany({
             where: and(
                 or(eq(friendships.userId1, userId), eq(friendships.userId2, userId)),
@@ -72,47 +81,76 @@ app.post("/start", jwtMiddleware, async (c) => {
 
         const friendIds = friends
             .map((f) => (f.userId1 === userId ? f.userId2 : f.userId1))
-            .filter((id) => id !== userId); // Ensure not notifying self
+            .filter((id) => id !== userId);
 
-        let deviceTokensToNotify: { token: string; platform: string }[] = [];
         if (friendIds.length > 0) {
+            // Get device tokens ONLY for iOS platform initially
             const friendTokens = await db.query.deviceTokens.findMany({
-                where: inArray(deviceTokens.userId, friendIds),
+                where: and(
+                    inArray(deviceTokens.userId, friendIds),
+                    eq(deviceTokens.platform, "ios"), // Filter for iOS tokens
+                ),
                 columns: {
                     token: true,
-                    platform: true,
+                    // platform: true, // We know it's ios here
                 },
             });
-            deviceTokensToNotify = friendTokens;
+
+            const tokensToSend = friendTokens.map((t) => t.token);
+            friendsToNotifyCount = tokensToSend.length;
+
+            if (tokensToSend.length > 0) {
+                // Get the user's info to include in notification
+                const currentUser = await db.query.users.findFirst({
+                    where: eq(users.id, userId),
+                    columns: {
+                        username: true,
+                        fullName: true,
+                    },
+                });
+
+                if (!currentUser) {
+                    // Should not happen if JWT is valid, but good to check
+                    console.error(
+                        `Could not find user ${userId} for notification details.`,
+                    );
+                } else {
+                    // Send notifications (don't await if you want the API to respond faster)
+                    // Awaiting is better for knowing the result, but might delay the response.
+                    // Consider moving this to a background task/queue in high-volume scenarios.
+                    const notificationResult = await notifyFriendsOfSession(
+                        env, // Pass environment variables
+                        tokensToSend,
+                        currentUser,
+                        sessionId,
+                    );
+                    notificationSuccessCount = notificationResult.successCount;
+                    notificationFailureCount = notificationResult.failureCount;
+                }
+            } else {
+                console.log("No iOS device tokens found for friends to notify.");
+            }
+        } else {
+            console.log("User has no friends to notify.");
         }
-
-        // Get the user's info to include in notification
-        const currentUser = await db.query.users.findFirst({
-            where: eq(users.id, userId),
-            columns: {
-                username: true,
-                fullName: true,
-            },
-        });
-
-        // In a production app, you would send push notifications here
-        console.log("Notifying friends of smoking session:", {
-            sessionId,
-            user: currentUser,
-            deviceTokensCount: deviceTokensToNotify.length,
-            // tokens: deviceTokensToNotify // Avoid logging tokens in production
-        });
-
-        // TODO: Implement actual push notification logic (e.g., queueing)
+        // --- End Notification Logic ---
 
         return c.json({
             success: true,
             sessionId,
-            message: "Smoking session started, friends notified",
-            friendsNotified: deviceTokensToNotify.length,
+            message: "Smoking session started.",
+            notifications: {
+                attempted: friendsToNotifyCount,
+                successful: notificationSuccessCount,
+                failed: notificationFailureCount,
+            },
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Start Smoking Session Error:", error);
+        // Log specific APNS config errors if they occur during setup
+        if (error.message.includes("APNS")) {
+            // Logged within the apns lib, but maybe add context here
+        }
         return c.json(
             { success: false, error: "Failed to start smoking session" },
             500,
