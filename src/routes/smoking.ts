@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { and, eq, isNull, ne, sql, or, desc, inArray, asc } from "drizzle-orm";
-import { AppEnv } from "../types";
+import { AppEnv, AppContext } from "../types"; // Import AppContext
 import {
     users,
     friendships,
@@ -15,7 +15,7 @@ import { jwtMiddleware } from "../lib/auth";
 import {
     ApnsPayload,
     notifyFriendsOfSession,
-    sendPushNotifications,
+    sendPushNotifications, // Keep this import
 } from "../lib/apns";
 
 // Define validation schemas
@@ -26,11 +26,50 @@ const responseSchema = z.object({
 // Create a router instance
 const app = new Hono<AppEnv>();
 
-// --- POST /start route (no changes needed here for the reported issues) ---
+// --- Helper Function for Fetching Friend Tokens ---
+// Extracted for reuse in /start and /end
+const getFriendDeviceTokens = async (
+    db: AppContext["var"]["db"],
+    userId: number,
+    platform: "ios" | "android" = "ios", // Default to iOS for now
+): Promise<{ tokens: string[]; friendIds: number[] }> => {
+    const friends = await db.query.friendships.findMany({
+        where: and(
+            or(eq(friendships.userId1, userId), eq(friendships.userId2, userId)),
+            eq(friendships.status, "accepted"),
+        ),
+        columns: {
+            userId1: true,
+            userId2: true,
+        },
+    });
+
+    const friendIds = friends
+        .map((f) => (f.userId1 === userId ? f.userId2 : f.userId1))
+        .filter((id) => id !== userId);
+
+    if (friendIds.length === 0) {
+        return { tokens: [], friendIds: [] };
+    }
+
+    const friendTokens = await db.query.deviceTokens.findMany({
+        where: and(
+            inArray(deviceTokens.userId, friendIds),
+            eq(deviceTokens.platform, platform),
+        ),
+        columns: {
+            token: true,
+        },
+    });
+
+    return { tokens: friendTokens.map((t) => t.token), friendIds };
+};
+
+// --- POST /start route ---
 app.post("/start", jwtMiddleware, async (c) => {
     const userId = c.get("jwtPayload").id;
     const db = c.get("db");
-    const env = c.env; // Get environment variables
+    const env = c.env;
 
     try {
         // Check if user already has an active session
@@ -55,11 +94,7 @@ app.post("/start", jwtMiddleware, async (c) => {
         // Create a new smoking session
         const result = await db
             .insert(smokingSessions)
-            .values({
-                userId,
-                // Drizzle ORM typically handles Date objects correctly for timestamp columns
-                // startTime: new Date(), // Drizzle handles Date -> unixepoch() conversion if mode: 'timestamp'
-            })
+            .values({ userId })
             .returning({ id: smokingSessions.id });
 
         if (!result || result.length === 0) {
@@ -72,83 +107,45 @@ app.post("/start", jwtMiddleware, async (c) => {
         let notificationFailureCount = 0;
         let friendsToNotifyCount = 0;
 
-        // Get all friends
-        const friends = await db.query.friendships.findMany({
-            where: and(
-                or(eq(friendships.userId1, userId), eq(friendships.userId2, userId)),
-                eq(friendships.status, "accepted"),
-            ),
-            columns: {
-                userId1: true,
-                userId2: true,
-            },
-        });
+        const { tokens: tokensToSend, friendIds } = await getFriendDeviceTokens(
+            db,
+            userId,
+        );
+        friendsToNotifyCount = tokensToSend.length;
 
-        const friendIds = friends
-            .map((f) => (f.userId1 === userId ? f.userId2 : f.userId1))
-            .filter((id) => id !== userId); // Ensure not notifying self
-
-        if (friendIds.length > 0) {
-            // Get device tokens ONLY for iOS platform initially
-            const friendTokens = await db.query.deviceTokens.findMany({
-                where: and(
-                    inArray(deviceTokens.userId, friendIds),
-                    eq(deviceTokens.platform, "ios"), // Filter for iOS tokens
-                ),
-                columns: {
-                    token: true,
-                    userId: true, // Include userId for logging
-                },
+        if (tokensToSend.length > 0) {
+            console.log(
+                `Found ${tokensToSend.length} iOS tokens for friends: ${friendIds.join(", ")}`,
+            );
+            const currentUser = await db.query.users.findFirst({
+                where: eq(users.id, userId),
+                columns: { id: true, username: true, fullName: true },
             });
 
-            const tokensToSend = friendTokens.map((t) => t.token);
-            friendsToNotifyCount = tokensToSend.length;
-
-            if (tokensToSend.length > 0) {
-                console.log(
-                    `Found ${tokensToSend.length} iOS tokens for friends:`,
-                    friendTokens.map((t) => `${t.userId}:${t.token.substring(0, 5)}...`),
+            if (!currentUser) {
+                console.error(
+                    `Could not find user ${userId} for notification details.`,
                 );
-                // Get the user's info to include in notification
-                const currentUser = await db.query.users.findFirst({
-                    where: eq(users.id, userId),
-                    columns: {
-                        id: true,
-                        username: true,
-                        fullName: true,
-                    },
-                });
-
-                if (!currentUser) {
-                    // Should not happen if JWT is valid, but good to check
-                    console.error(
-                        `Could not find user ${userId} for notification details.`,
-                    );
-                } else {
-                    // Send notifications (awaiting is better for knowing the result during dev)
-                    // Consider moving this to a background task/queue in high-volume scenarios.
-                    console.log(
-                        `Notifying friends about session ${sessionId} started by user ${userId} (${currentUser.username})`,
-                    );
-                    const notificationResult = await notifyFriendsOfSession(
-                        env, // Pass environment variables
-                        tokensToSend,
-                        currentUser,
-                        sessionId,
-                    );
-                    notificationSuccessCount = notificationResult.successCount;
-                    notificationFailureCount = notificationResult.failureCount;
-                    console.log(
-                        `Session start notification result: ${notificationSuccessCount} success, ${notificationFailureCount} failed.`,
-                    );
-                }
             } else {
                 console.log(
-                    `No iOS device tokens found for friends (${friendIds.join(", ")}) to notify.`,
+                    `Notifying friends about session ${sessionId} started by user ${userId} (${currentUser.username})`,
+                );
+                const notificationResult = await notifyFriendsOfSession(
+                    env,
+                    tokensToSend,
+                    currentUser,
+                    sessionId,
+                );
+                notificationSuccessCount = notificationResult.successCount;
+                notificationFailureCount = notificationResult.failureCount;
+                console.log(
+                    `Session start notification result: ${notificationSuccessCount} success, ${notificationFailureCount} failed.`,
                 );
             }
         } else {
-            console.log(`User ${userId} has no friends to notify.`);
+            console.log(
+                `User ${userId} has no friends or friends have no iOS tokens to notify.`,
+            );
         }
         // --- End Notification Logic ---
 
@@ -171,7 +168,7 @@ app.post("/start", jwtMiddleware, async (c) => {
     }
 });
 
-// --- GET /active route (no changes needed) ---
+// --- GET /active route ---
 app.get("/active", jwtMiddleware, async (c) => {
     const userId = c.get("jwtPayload").id;
     const db = c.get("db");
@@ -194,11 +191,10 @@ app.get("/active", jwtMiddleware, async (c) => {
             .map((f) => (f.userId1 === userId ? f.userId2 : f.userId1))
             .filter((id) => id !== userId);
 
-        // Include own ID to potentially see own active session if needed?
-        // No, the request is for friends' active sessions.
-
         if (friendIds.length === 0) {
-            console.log(`User ${userId} has no friends, returning empty active sessions.`);
+            console.log(
+                `User ${userId} has no friends, returning empty active sessions.`,
+            );
             return c.json({ success: true, sessions: [] });
         }
 
@@ -255,11 +251,13 @@ app.get("/active", jwtMiddleware, async (c) => {
     }
 });
 
-// --- POST /end/:sessionId route (no changes needed) ---
+// --- POST /end/:sessionId route ---
 app.post("/end/:sessionId", jwtMiddleware, async (c) => {
     const userId = c.get("jwtPayload").id;
     const sessionIdParam = c.req.param("sessionId");
     const sessionId = parseInt(sessionIdParam, 10);
+    const db = c.get("db");
+    const env = c.env; // Get environment variables
 
     if (isNaN(sessionId)) {
         return c.json(
@@ -268,13 +266,12 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
         );
     }
 
-    const db = c.get("db");
-
     try {
         // End the session by setting endTime
+        const endTime = new Date(); // Capture end time before DB call
         const result = await db
             .update(smokingSessions)
-            .set({ endTime: new Date() }) // Drizzle handles Date objects
+            .set({ endTime: endTime }) // Use captured time
             .where(
                 and(
                     eq(smokingSessions.id, sessionId),
@@ -282,10 +279,9 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
                     isNull(smokingSessions.endTime), // Only end active sessions
                 ),
             )
-            .returning({ id: smokingSessions.id }); // Use returning to confirm which session was ended
+            .returning({ id: smokingSessions.id });
 
         // Check if any row was actually updated
-        // D1 doesn't reliably return meta.changes, use returning length instead
         if (result.length === 0) {
             // Check if the session exists but doesn't belong to user or is already ended
             const existingSession = await db.query.smokingSessions.findFirst({
@@ -305,12 +301,84 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
                     400,
                 );
             }
-            // Should not be reached if logic above is correct
             return c.json({ success: false, error: "Failed to end session" }, 500);
         }
 
         console.log(`User ${userId} ended session ${sessionId}`);
-        return c.json({ success: true, message: "Smoking session ended" });
+
+        // --- Notify Friends Session Ended ---
+        let notificationSuccessCount = 0;
+        let notificationFailureCount = 0;
+        let friendsToNotifyCount = 0;
+
+        const { tokens: tokensToSend, friendIds } = await getFriendDeviceTokens(
+            db,
+            userId,
+        );
+        friendsToNotifyCount = tokensToSend.length;
+
+        if (tokensToSend.length > 0) {
+            console.log(
+                `Found ${tokensToSend.length} iOS tokens for friends to notify about session end: ${friendIds.join(", ")}`,
+            );
+            const currentUser = await db.query.users.findFirst({
+                where: eq(users.id, userId),
+                columns: { username: true, fullName: true },
+            });
+
+            if (currentUser) {
+                const userName = currentUser.fullName || currentUser.username;
+                const payload: ApnsPayload = {
+                    aps: {
+                        alert: {
+                            // Title is optional, body is sufficient
+                            body: `${userName} has ended their smoking session.`,
+                        },
+                        sound: "default",
+                        "content-available": 1, // Mark as background update potentially
+                    },
+                    notificationType: "session_ended", // Distinct type
+                    sessionId: sessionId,
+                    enderId: userId,
+                    enderUsername: currentUser.username,
+                };
+
+                console.log(
+                    `Notifying friends about session ${sessionId} ending by user ${userId} (${currentUser.username})`,
+                );
+                // Use the generic sender function
+                const notificationResult = await sendPushNotifications(
+                    env,
+                    tokensToSend,
+                    payload,
+                );
+                notificationSuccessCount = notificationResult.successCount;
+                notificationFailureCount = notificationResult.failureCount;
+                console.log(
+                    `Session end notification result: ${notificationSuccessCount} success, ${notificationFailureCount} failed.`,
+                );
+            } else {
+                console.error(
+                    `Could not find user ${userId} for session end notification details.`,
+                );
+            }
+        } else {
+            console.log(
+                `User ${userId} has no friends or friends have no iOS tokens to notify about session end.`,
+            );
+        }
+        // --- End Notification Logic ---
+
+        return c.json({
+            success: true,
+            message: "Smoking session ended",
+            notifications: {
+                // Optional: include notification info in response
+                attempted: friendsToNotifyCount,
+                successful: notificationSuccessCount,
+                failed: notificationFailureCount,
+            },
+        });
     } catch (error) {
         console.error(`End Smoking Session Error (Session ID: ${sessionId}):`, error);
         return c.json(
@@ -320,7 +388,7 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
     }
 });
 
-// --- POST /respond/:sessionId route with APNS Debugging ---
+// --- POST /respond/:sessionId route ---
 app.post(
     "/respond/:sessionId",
     jwtMiddleware,
@@ -342,7 +410,6 @@ app.post(
 
         try {
             // --- Validation ---
-            // Check if session exists, is active
             const session = await db.query.smokingSessions.findFirst({
                 where: and(
                     eq(smokingSessions.id, sessionId),
@@ -360,17 +427,15 @@ app.post(
                 );
             }
 
-            // Ensure responder is not the owner
             if (session.userId === responderId) {
                 return c.json(
                     { success: false, error: "Cannot respond to your own session" },
-                    403, // Use 403 Forbidden
+                    403,
                 );
             }
 
             const ownerId = session.userId;
 
-            // Check if responder is a friend of the session owner
             const friendship = await db.query.friendships.findFirst({
                 where: and(
                     or(
@@ -385,7 +450,7 @@ app.post(
                     ),
                     eq(friendships.status, "accepted"),
                 ),
-                columns: { userId1: true }, // Just need to know it exists
+                columns: { userId1: true },
             });
 
             if (!friendship) {
@@ -394,7 +459,7 @@ app.post(
                         success: false,
                         error: "You are not friends with the session creator",
                     },
-                    403, // Use 403 Forbidden
+                    403,
                 );
             }
 
@@ -408,23 +473,21 @@ app.post(
                     sessionId,
                     responderId: responderId,
                     responseType,
-                    // timestamp: new Date(), // Handled by default value
                 })
                 .onConflictDoUpdate({
                     target: [sessionResponses.sessionId, sessionResponses.responderId],
                     set: {
                         responseType: responseType,
-                        timestamp: new Date(), // Explicitly update timestamp on conflict
+                        timestamp: sql`(unixepoch())`, // Use SQL function for timestamp update
                     },
                 })
-                .run(); // Use run() for D1 upserts
+                .run();
 
             // --- Send Notification to Session Owner ---
-            // Fetch owner's device tokens (iOS only for now)
             const ownerTokens = await db.query.deviceTokens.findMany({
                 where: and(
                     eq(deviceTokens.userId, ownerId),
-                    eq(deviceTokens.platform, "ios"), // Filter for iOS
+                    eq(deviceTokens.platform, "ios"),
                 ),
                 columns: { token: true },
             });
@@ -437,7 +500,6 @@ app.post(
                     tokensToSend.map((t) => `${t.substring(0, 5)}...`),
                 );
 
-                // Fetch responder's details for the notification message
                 const responder = await db.query.users.findFirst({
                     where: eq(users.id, responderId),
                     columns: { username: true, fullName: true },
@@ -458,7 +520,6 @@ app.post(
                             break;
                     }
 
-                    // Construct the notification payload
                     const notificationPayload: ApnsPayload = {
                         aps: {
                             alert: {
@@ -467,7 +528,7 @@ app.post(
                             },
                             sound: "default",
                         },
-                        notificationType: "session_response", // New type
+                        notificationType: "session_response",
                         sessionId: sessionId,
                         responderId: responderId,
                         responderUsername: responder.username,
@@ -477,29 +538,21 @@ app.post(
                     console.log(
                         `Attempting to send response notification to owner ${ownerId} (tokens: ${tokensToSend.length})`,
                     );
-                    console.log(`Payload: ${JSON.stringify(notificationPayload)}`);
-
-                    // Send the notification
-                    // OPTION 1: Fire-and-forget (faster API response, errors logged in background)
-                    // sendPushNotifications(env, tokensToSend, notificationPayload)
-                    //     .then((result) => {
-                    //         console.log(
-                    //             `Response notification result for owner ${ownerId}: ${result.successCount} success, ${result.failureCount} failed.`,
-                    //         );
-                    //     })
-                    //     .catch((err) => {
-                    //         console.error(
-                    //             `Error sending response notification promise to owner ${ownerId}:`,
-                    //             err,
-                    //         );
-                    //     });
-
-                    // OPTION 2: Await (API waits for result, easier debugging)
+                    // Await the result for better logging during development
                     try {
-                        const result = await sendPushNotifications(env, tokensToSend, notificationPayload);
-                        console.log(`Response notification result for owner ${ownerId}: ${result.successCount} success, ${result.failureCount} failed.`);
+                        const result = await sendPushNotifications(
+                            env,
+                            tokensToSend,
+                            notificationPayload,
+                        );
+                        console.log(
+                            `Response notification result for owner ${ownerId}: ${result.successCount} success, ${result.failureCount} failed.`,
+                        );
                     } catch (err) {
-                        console.error(`Error awaiting response notification to owner ${ownerId}:`, err);
+                        console.error(
+                            `Error awaiting response notification to owner ${ownerId}:`,
+                            err,
+                        );
                     }
                 } else {
                     console.error(
@@ -513,10 +566,9 @@ app.post(
             }
             // --- End Notification Logic ---
 
-            // Return success to the user who responded
             return c.json({
                 success: true,
-                message: "Response recorded", // Changed message slightly
+                message: "Response recorded",
                 responseType,
             });
         } catch (error: any) {
@@ -524,14 +576,6 @@ app.post(
                 `Respond to Session Error (Session ID: ${sessionId}):`,
                 error,
             );
-            // Check for specific errors like constraint violations if needed
-            if (error.message?.includes("UNIQUE constraint failed")) {
-                // This case should be handled by onConflictDoUpdate, but log if it somehow occurs
-                console.error(
-                    "Unique constraint violation during response upsert:",
-                    error,
-                );
-            }
             return c.json(
                 { success: false, error: "Failed to respond to session" },
                 500,
@@ -540,7 +584,7 @@ app.post(
     },
 );
 
-// --- GET /responses/:sessionId route (no changes needed) ---
+// --- GET /responses/:sessionId route ---
 app.get("/responses/:sessionId", jwtMiddleware, async (c) => {
     const userId = c.get("jwtPayload").id;
     const sessionIdParam = c.req.param("sessionId");
@@ -556,8 +600,6 @@ app.get("/responses/:sessionId", jwtMiddleware, async (c) => {
     const db = c.get("db");
 
     try {
-        // Check if session belongs to user OR if user is friends with owner?
-        // Current logic: Only owner can see responses. Let's keep it that way for now.
         const session = await db.query.smokingSessions.findFirst({
             where: and(
                 eq(smokingSessions.id, sessionId),
@@ -571,8 +613,6 @@ app.get("/responses/:sessionId", jwtMiddleware, async (c) => {
         });
 
         if (!session) {
-            // Could add a check here to see if the session exists at all
-            // to differentiate between "not found" and "not authorized"
             const exists = await db.query.smokingSessions.findFirst({
                 where: eq(smokingSessions.id, sessionId),
                 columns: { id: true },
@@ -580,15 +620,12 @@ app.get("/responses/:sessionId", jwtMiddleware, async (c) => {
             return c.json(
                 {
                     success: false,
-                    error: exists
-                        ? "You do not own this session"
-                        : "Session not found",
+                    error: exists ? "You do not own this session" : "Session not found",
                 },
                 exists ? 403 : 404,
             );
         }
 
-        // Get all responses for this session
         const responses = await db.query.sessionResponses.findMany({
             where: eq(sessionResponses.sessionId, sessionId),
             with: {
@@ -600,7 +637,7 @@ app.get("/responses/:sessionId", jwtMiddleware, async (c) => {
                     },
                 },
             },
-            orderBy: asc(sessionResponses.timestamp), // Show in chronological order
+            orderBy: asc(sessionResponses.timestamp),
         });
 
         const formattedResponses = responses.map((response) => ({
@@ -635,20 +672,18 @@ app.get("/responses/:sessionId", jwtMiddleware, async (c) => {
     }
 });
 
-// --- GET /history route (no changes needed) ---
+// --- GET /history route ---
 app.get("/history", jwtMiddleware, async (c) => {
     const userId = c.get("jwtPayload").id;
-    // Ensure limit and page are reasonable numbers
     const limitParam = c.req.query("limit");
     const pageParam = c.req.query("page");
-    const limit = Math.min(50, Math.max(1, parseInt(limitParam || "10", 10))); // Max 50 per page
+    const limit = Math.min(50, Math.max(1, parseInt(limitParam || "10", 10)));
     const page = Math.max(1, parseInt(pageParam || "1", 10));
     const offset = (page - 1) * limit;
 
     const db = c.get("db");
 
     try {
-        // Get user's sessions with pagination
         const sessionsQuery = db.query.smokingSessions.findMany({
             where: eq(smokingSessions.userId, userId),
             orderBy: desc(smokingSessions.startTime),
@@ -670,19 +705,16 @@ app.get("/history", jwtMiddleware, async (c) => {
             },
         });
 
-        // Get total count for pagination
         const countQuery = db
             .select({ count: sql<number>`count(*)` })
             .from(smokingSessions)
             .where(eq(smokingSessions.userId, userId));
 
-        // Execute queries concurrently
         const [sessions, countResult] = await Promise.all([
             sessionsQuery,
             countQuery,
         ]);
 
-        // Format sessions with responses
         const formattedSessions = sessions.map((session) => ({
             id: session.id,
             startTime: session.startTime,
