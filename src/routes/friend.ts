@@ -25,7 +25,7 @@ const app = new Hono<AppEnv>();
 // --- Helper Function for Sending Friend Notifications ---
 // Encapsulates fetching tokens and sending notification
 const notifyUser = async (
-    c: AppContext, // Use HonoContext for access to env and db
+    c: AppContext,
     recipientId: number,
     payload: ApnsPayload,
 ) => {
@@ -48,19 +48,18 @@ const notifyUser = async (
             console.log(
                 `Sending notification type '${payload.notificationType}' to user ${recipientId} (${tokensToSend.length} tokens)`,
             );
-            // Fire and forget (don't await to avoid blocking response)
-            sendPushNotifications(env, tokensToSend, payload)
-                .then((result) => {
-                    console.log(
-                        `Friend notification result for user ${recipientId}: ${result.successCount} success, ${result.failureCount} failed.`,
-                    );
-                })
-                .catch((err) => {
-                    console.error(
-                        `Error sending friend notification promise to user ${recipientId}:`,
-                        err,
-                    );
-                });
+            // Await the result instead of fire and forget
+            try {
+                const result = await sendPushNotifications(env, tokensToSend, payload);
+                console.log(
+                    `Friend notification result for user ${recipientId}: ${result.successCount} success, ${result.failureCount} failed.`,
+                );
+            } catch (err) {
+                console.error(
+                    `Error sending friend notification to user ${recipientId}:`,
+                    err,
+                );
+            }
         } else {
             console.log(
                 `No iOS device tokens found for user ${recipientId} to send notification type '${payload.notificationType}'.`,
@@ -370,22 +369,23 @@ app.post(
                             aps: {
                                 alert: {
                                     title: "Friend Request Accepted",
+                                    // currentUserName is User A (who triggered the accept by sending a request)
                                     body: `${currentUserName} accepted your friend request!`,
                                 },
                                 sound: "default",
                             },
                             notificationType: "friend_accepted",
-                            accepterId: userId, // User who accepted
-                            accepterUsername: currentUser?.username,
+                            accepterId: userId, // ID of User A
+                            accepterUsername: currentUser?.username, // Username of User A
                         };
-                        // Notify the original requester (targetUserId)
+                        // Notify the original requester (targetUserId - User B in this case)
                         notifyUser(c, targetUserId, payload);
                         // --- End Notification ---
 
                         return c.json({
                             success: true,
                             message: "Friend request accepted",
-                            status: "accepted", // Reflect the new status
+                            status: "accepted",
                         });
                     }
                 }
@@ -394,8 +394,8 @@ app.post(
             // No existing relationship, create a new pending request
             console.log(`User ${userId} sending friend request to ${targetUserId}`);
             await db.insert(friendships).values({
-                userId1: userId, // Initiator
-                userId2: targetUserId, // Recipient
+                userId1: userId, // Initiator (e.g., User A)
+                userId2: targetUserId, // Recipient (e.g., User B)
                 status: "pending",
             });
 
@@ -404,23 +404,24 @@ app.post(
                 aps: {
                     alert: {
                         title: "New Friend Request",
+                        // currentUserName is the name of the user sending the request (User A)
                         body: `${currentUserName} sent you a friend request.`,
                     },
                     sound: "default",
-                    badge: 1, // Increment badge? Or handle client-side
+                    // badge: 1, // Consider badge handling
                 },
-                notificationType: "friend_request",
-                requesterId: userId,
-                requesterUsername: currentUser?.username,
+                notificationType: "friend_request", // Type for client routing
+                requesterId: userId, // ID of User A
+                requesterUsername: currentUser?.username, // Username of User A
             };
-            // Notify the target user
-            notifyUser(c, targetUserId, payload);
+            // Notify the target user (User B)
+            notifyUser(c, targetUserId, payload); // Calls the helper to send push
             // --- End Notification ---
 
             return c.json({
                 success: true,
                 message: "Friend request sent",
-                status: "pending", // Reflect the new status
+                status: "pending",
             });
         } catch (error: any) {
             console.error("Send Friend Request Error:", error);
@@ -517,16 +518,17 @@ app.post("/accept/:requestId", jwtMiddleware, async (c) => {
             aps: {
                 alert: {
                     title: "Friend Request Accepted",
+                    // accepterName is the name of the user accepting the request (User B)
                     body: `${accepterName} accepted your friend request!`,
                 },
                 sound: "default",
             },
-            notificationType: "friend_accepted",
-            accepterId: userId,
-            accepterUsername: accepter?.username,
+            notificationType: "friend_accepted", // Type for client routing
+            accepterId: userId, // ID of User B
+            accepterUsername: accepter?.username, // Username of User B
         };
-        // Notify the original requester
-        notifyUser(c, requesterId, payload);
+        // Notify the original requester (User A)
+        notifyUser(c, requesterId, payload); // Calls the helper to send push
         // --- End Notification ---
 
         return c.json({ success: true, message: "Friend request accepted" });
