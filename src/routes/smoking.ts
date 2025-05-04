@@ -335,7 +335,6 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
                             body: `${userName} has ended their smoking session.`,
                         },
                         sound: "default",
-                        "content-available": 1, // Mark as background update potentially
                     },
                     notificationType: "session_ended", // Distinct type
                     sessionId: sessionId,
