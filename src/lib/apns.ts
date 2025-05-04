@@ -30,15 +30,14 @@ export interface ApnsPayload {
 
 // --- Helper functions remain the same ---
 const getApnsServer = (environment: "development" | "production"): string => {
-    // ... (implementation unchanged)
     return environment === "development"
         ? "https://api.sandbox.push.apple.com"
         : "https://api.push.apple.com";
 };
 
 const generateApnsAuthToken = async (config: ApnsConfig): Promise<string> => {
-    // ... (implementation unchanged)
     try {
+        // Ensure newline characters are correctly interpreted
         const ecPrivateKey = await jose.importPKCS8(
             config.privateKey.replace(/\\n/g, "\n"),
             "ES256",
@@ -50,6 +49,8 @@ const generateApnsAuthToken = async (config: ApnsConfig): Promise<string> => {
             })
             .setIssuedAt()
             .setIssuer(config.teamId)
+            // Consider a shorter expiration if generating frequently, but < 1hr is typical
+            // .setExpirationTime('1h')
             .sign(ecPrivateKey);
         return jwt;
     } catch (error: any) {
@@ -65,18 +66,19 @@ export const sendApnsNotification = async (
     payload: ApnsPayload,
     authToken: string,
 ): Promise<Response> => {
-    // ... (implementation unchanged)
     const server = getApnsServer(config.environment);
     const url = `${server}/3/device/${deviceToken}`;
     const headers = {
         authorization: `bearer ${authToken}`,
         "apns-topic": config.topic,
         "apns-push-type": payload.aps["content-available"] ? "background" : "alert", // Adjust push type
-        "apns-priority": "10",
+        "apns-priority": "10", // Use 5 for lower priority if needed (e.g., background)
         "Content-Type": "application/json",
     };
 
-    console.log(`Sending APNS to ${deviceToken.substring(0, 10)}...`);
+    const shortToken = `${deviceToken.substring(0, 5)}...${deviceToken.substring(deviceToken.length - 5)}`;
+    console.log(`Sending APNS to ${shortToken}`);
+    // console.log(`APNS Payload: ${JSON.stringify(payload)}`); // Uncomment for deep debugging
 
     try {
         const response = await fetch(url, {
@@ -84,30 +86,30 @@ export const sendApnsNotification = async (
             headers: headers,
             body: JSON.stringify(payload),
         });
+
         if (!response.ok) {
             const responseBody = await response.text();
+            const reason = responseBody ? JSON.parse(responseBody)?.reason : "Unknown";
             console.error(
-                `APNS request failed for token ${deviceToken.substring(0, 10)}...: ${response.status} ${response.statusText}`,
-                responseBody,
+                `APNS request failed for token ${shortToken}: ${response.status} ${response.statusText} - Reason: ${reason}`,
+                // responseBody, // Log full body if needed
             );
+            // Propagate a more informative error
             throw new Error(
-                `APNS Error ${response.status}: ${responseBody || response.statusText}`,
+                `APNS Error ${response.status}: ${reason || response.statusText}`,
             );
         }
-        console.log(
-            `APNS Success for token ${deviceToken.substring(0, 10)}...: ${response.status}`,
-        );
+
+        console.log(`APNS Success for token ${shortToken}: ${response.status}`);
         return response;
     } catch (error: any) {
-        console.error(
-            `APNS fetch failed for token ${deviceToken.substring(0, 10)}...:`,
-            error,
-        );
+        console.error(`APNS fetch failed for token ${shortToken}:`, error);
+        // Re-throw the error so Promise.allSettled catches it correctly
         throw error;
     }
 };
 
-// --- NEW: Generic Notification Sending Function ---
+// --- Generic Notification Sending Function ---
 /**
  * Sends a specific APNS payload to a list of device tokens.
  * Handles token generation and concurrent sending.
@@ -143,8 +145,16 @@ export const sendPushNotifications = async (
     ) {
         console.error(
             "APNS configuration missing in environment variables.",
-            config,
+            // Avoid logging the private key itself
+            {
+                keyId: !!config.keyId,
+                teamId: !!config.teamId,
+                privateKey: !!config.privateKey,
+                topic: !!config.topic,
+                environment: config.environment,
+            },
         );
+        // Return failure for all tokens as we cannot proceed
         return { successCount: 0, failureCount: deviceTokens.length };
     }
 
@@ -162,24 +172,35 @@ export const sendPushNotifications = async (
 
         let successCount = 0;
         let failureCount = 0;
+        const failedTokens: string[] = [];
 
         results.forEach((result, index) => {
+            const token = deviceTokens[index];
+            const shortToken = `${token.substring(0, 5)}...${token.substring(token.length - 5)}`;
             if (result.status === "fulfilled") {
                 successCount++;
             } else {
                 failureCount++;
+                failedTokens.push(token); // Collect failed tokens
                 console.error(
-                    `Failed to send APNS to token index ${index} (${deviceTokens[index].substring(0, 10)}...):`,
+                    `Failed to send APNS to token ${shortToken}:`,
                     result.reason,
                 );
                 // TODO: Handle specific APNS errors like 'BadDeviceToken'
-                // if (result.reason.message.includes('BadDeviceToken')) { /* remove token */ }
+                // Consider adding logic here to queue the token for removal from the DB
+                // if (result.reason instanceof Error && result.reason.message.includes('BadDeviceToken')) {
+                //   console.log(`Marking token ${shortToken} as invalid.`);
+                //   // Add to a list or emit an event to handle DB removal
+                // }
             }
         });
 
         console.log(
             `APNS Batch Send Results: ${successCount} succeeded, ${failureCount} failed.`,
         );
+        if (failureCount > 0) {
+            console.log("Failed tokens (first 5):", failedTokens.slice(0, 5));
+        }
         return { successCount, failureCount };
     } catch (error) {
         // Catch errors during token generation or other setup
@@ -188,7 +209,7 @@ export const sendPushNotifications = async (
     }
 };
 
-// --- Update notifyFriendsOfSession to use the generic function ---
+// --- notifyFriendsOfSession remains the same ---
 /**
  * Sends notifications to multiple devices about a new smoking session.
  * @param env The Cloudflare Worker environment bindings.
