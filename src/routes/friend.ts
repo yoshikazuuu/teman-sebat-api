@@ -248,16 +248,23 @@ app.post(
                     );
                 } else {
                     // The target user initiated the request previously, accept it
+                    // Ensure we target the correct pending request:
+                    // targetUser.id should be userId1, and userId should be userId2
                     await db
                         .update(friendships)
                         .set({ status: "accepted" })
                         .where(
                             and(
-                                eq(friendships.userId1, user1Id),
-                                eq(friendships.userId2, user2Id),
+                                // The existing request was initiated by the target user
+                                eq(friendships.userId1, targetUser.id),
+                                // The current user was the recipient
+                                eq(friendships.userId2, userId),
+                                eq(friendships.status, "pending"), // Ensure it's still pending
                             ),
                         )
                         .run(); // Use run()
+
+                    // TODO: Send notification to targetUser.id that userId accepted!
 
                     return c.json({
                         success: true,

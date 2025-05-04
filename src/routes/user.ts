@@ -89,6 +89,7 @@ app.patch(
 );
 
 // Register device token for push notifications
+// src/routes/user.ts - Updated POST /devices
 app.post(
     "/devices",
     jwtMiddleware,
@@ -99,49 +100,38 @@ app.post(
         const db = c.get("db");
 
         try {
-            // Check if token already exists
-            const existingToken = await db.query.deviceTokens.findFirst({
-                where: eq(deviceTokens.token, token),
-            });
-
-            if (existingToken) {
-                // Update the existing token if it belongs to another user
-                if (existingToken.userId !== userId) {
-                    await db
-                        .update(deviceTokens)
-                        .set({
-                            userId,
-                            lastUpdated: new Date(),
-                        })
-                        .where(eq(deviceTokens.token, token));
-                } else {
-                    // Just update the timestamp
-                    await db
-                        .update(deviceTokens)
-                        .set({
-                            lastUpdated: new Date(),
-                        })
-                        .where(eq(deviceTokens.token, token));
-                }
-            } else {
-                // Insert new token
-                await db
-                    .insert(deviceTokens)
-                    .values({
-                        userId,
-                        token,
-                        platform,
+            // Use ON CONFLICT DO UPDATE for atomic upsert
+            await db
+                .insert(deviceTokens)
+                .values({
+                    userId,
+                    token,
+                    platform,
+                    // lastUpdated is handled by default value or update clause
+                })
+                .onConflictDoUpdate({
+                    target: deviceTokens.token, // Conflict on the unique token
+                    set: {
+                        // Update userId if different, and always update timestamp
+                        userId: userId,
                         lastUpdated: new Date(),
-                    });
-            }
+                        platform: platform, // Also update platform if it changed
+                    },
+                })
+                .run(); // Use run() for D1 inserts/updates
 
-            return c.json({ success: true });
-        } catch (error) {
+            return c.json({ success: true, message: "Device registered" });
+        } catch (error: any) {
             console.error("Register Device Error:", error);
-            return c.json({ success: false, error: "Failed to register device" }, 500);
+            // Drizzle might throw specific errors for constraints
+            return c.json(
+                { success: false, error: "Failed to register device" },
+                500,
+            );
         }
-    }
+    },
 );
+
 
 // Delete device token
 app.delete(

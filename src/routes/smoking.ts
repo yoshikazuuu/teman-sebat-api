@@ -12,7 +12,7 @@ import {
     deviceTokens,
 } from "../db/schema";
 import { jwtMiddleware } from "../lib/auth";
-import { notifyFriendsOfSession } from "../lib/apns";
+import { ApnsPayload, notifyFriendsOfSession, sendPushNotifications } from "../lib/apns";
 
 // Define validation schemas
 const responseSchema = z.object({
@@ -104,6 +104,7 @@ app.post("/start", jwtMiddleware, async (c) => {
                 const currentUser = await db.query.users.findFirst({
                     where: eq(users.id, userId),
                     columns: {
+                        id: true,
                         username: true,
                         fullName: true,
                     },
@@ -290,23 +291,24 @@ app.post(
     jwtMiddleware,
     zValidator("json", responseSchema),
     async (c) => {
-        const userId = c.get("jwtPayload").id;
+        const responderId = c.get("jwtPayload").id; // User sending the response
         const sessionId = parseInt(c.req.param("sessionId"), 10);
         const { responseType } = c.req.valid("json");
+        const db = c.get("db");
+        const env = c.env; // Get environment variables
 
         if (isNaN(sessionId)) {
             return c.json({ success: false, error: "Invalid session ID" }, 400);
         }
 
-        const db = c.get("db");
-
         try {
+            // --- Validation (slightly adjusted) ---
             // Check if session exists, is active, and doesn't belong to the responder
             const session = await db.query.smokingSessions.findFirst({
                 where: and(
                     eq(smokingSessions.id, sessionId),
-                    isNull(smokingSessions.endTime),
-                    ne(smokingSessions.userId, userId), // Can't respond to your own session
+                    isNull(smokingSessions.endTime), // Ensure session is active
+                    // ne(smokingSessions.userId, responderId) // Allow responding to own session? No, keep this check.
                 ),
                 columns: {
                     userId: true, // Need the owner's ID
@@ -315,24 +317,31 @@ app.post(
 
             if (!session) {
                 return c.json(
-                    {
-                        success: false,
-                        error: "Active session not found or cannot respond to own session",
-                    },
+                    { success: false, error: "Active session not found" },
                     404,
                 );
             }
 
-            // Check if user is a friend of the session creator
+            // Ensure responder is not the owner
+            if (session.userId === responderId) {
+                return c.json(
+                    { success: false, error: "Cannot respond to your own session" },
+                    403,
+                );
+            }
+
+            const ownerId = session.userId;
+
+            // Check if responder is a friend of the session owner
             const friendship = await db.query.friendships.findFirst({
                 where: and(
                     or(
-                        and(eq(friendships.userId1, userId), eq(friendships.userId2, session.userId)),
-                        and(eq(friendships.userId1, session.userId), eq(friendships.userId2, userId)),
+                        and(eq(friendships.userId1, responderId), eq(friendships.userId2, ownerId)),
+                        and(eq(friendships.userId1, ownerId), eq(friendships.userId2, responderId)),
                     ),
                     eq(friendships.status, "accepted"),
                 ),
-                columns: { userId1: true }, // Just need to know if it exists
+                columns: { userId1: true },
             });
 
             if (!friendship) {
@@ -345,17 +354,17 @@ app.post(
                 );
             }
 
-            // Upsert the response: Insert or update if exists
+            // --- Store the Response ---
             await db
                 .insert(sessionResponses)
                 .values({
                     sessionId,
-                    responderId: userId,
+                    responderId: responderId,
                     responseType,
                     timestamp: new Date(),
                 })
                 .onConflictDoUpdate({
-                    target: [sessionResponses.sessionId, sessionResponses.responderId], // Assuming composite unique constraint or PK
+                    target: [sessionResponses.sessionId, sessionResponses.responderId],
                     set: {
                         responseType: responseType,
                         timestamp: new Date(),
@@ -363,41 +372,81 @@ app.post(
                 })
                 .run();
 
-            // Get session owner's device tokens for notification
+            // --- Send Notification to Session Owner ---
+            // Fetch owner's device tokens (iOS only for now)
             const ownerTokens = await db.query.deviceTokens.findMany({
-                where: eq(deviceTokens.userId, session.userId),
-                columns: { token: true, platform: true }
+                where: and(
+                    eq(deviceTokens.userId, ownerId),
+                    eq(deviceTokens.platform, "ios"), // Filter for iOS
+                ),
+                columns: { token: true },
             });
 
-            // Get responder info
-            const responder = await db.query.users.findFirst({
-                where: eq(users.id, userId),
-                columns: {
-                    username: true,
-                    fullName: true,
-                },
-            });
+            const tokensToSend = ownerTokens.map((t) => t.token);
 
-            // In a production app, you would send push notification to session creator
-            console.log("Sending response notification:", {
-                sessionId,
-                responseType,
-                responder,
-                recipient: {
-                    id: session.userId,
-                    deviceTokensCount: ownerTokens.length,
-                },
-            });
-            // TODO: Implement actual push notification logic
+            if (tokensToSend.length > 0) {
+                // Fetch responder's details for the notification message
+                const responder = await db.query.users.findFirst({
+                    where: eq(users.id, responderId),
+                    columns: { username: true, fullName: true },
+                });
 
+                if (responder) {
+                    const responderName = responder.fullName || responder.username;
+                    let responseText = "";
+                    switch (responseType) {
+                        case "coming": responseText = "is coming!"; break;
+                        case "done": responseText = "is done."; break;
+                        case "coming_5": responseText = "is coming in 5 minutes."; break;
+                    }
+
+                    // Construct the notification payload
+                    const notificationPayload: ApnsPayload = {
+                        aps: {
+                            alert: {
+                                title: "Session Response",
+                                body: `${responderName} ${responseText}`,
+                            },
+                            sound: "default",
+                        },
+                        notificationType: "session_response", // New type
+                        sessionId: sessionId,
+                        responderId: responderId,
+                        responderUsername: responder.username,
+                        responseType: responseType,
+                    };
+
+                    // Send the notification (don't block the API response)
+                    // Use await if you need the result, otherwise fire-and-forget
+                    sendPushNotifications(env, tokensToSend, notificationPayload)
+                        .then(result => {
+                            console.log(`Response notification sent to owner ${ownerId}: ${result.successCount} success, ${result.failureCount} failed.`);
+                        })
+                        .catch(err => {
+                            console.error(`Error sending response notification to owner ${ownerId}:`, err);
+                        });
+
+                } else {
+                    console.error(`Could not find responder details for user ID ${responderId}`);
+                }
+            } else {
+                console.log(`Session owner ${ownerId} has no registered iOS device tokens.`);
+            }
+            // --- End Notification Logic ---
+
+            // Return success to the user who responded
             return c.json({
                 success: true,
                 message: "Response sent",
                 responseType,
             });
-        } catch (error) {
+        } catch (error: any) {
             console.error("Respond to Session Error:", error);
             // Check for specific errors like constraint violations if needed
+            if (error.message?.includes("UNIQUE constraint failed")) {
+                // This case should be handled by onConflictDoUpdate, but log if it somehow occurs
+                console.error("Unique constraint violation during response upsert:", error);
+            }
             return c.json(
                 { success: false, error: "Failed to respond to session" },
                 500,
