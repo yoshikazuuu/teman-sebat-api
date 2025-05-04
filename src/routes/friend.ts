@@ -379,7 +379,7 @@ app.post(
                             accepterUsername: currentUser?.username, // Username of User A
                         };
                         // Notify the original requester (targetUserId - User B in this case)
-                        notifyUser(c, targetUserId, payload);
+                        await notifyUser(c, targetUserId, payload);
                         // --- End Notification ---
 
                         return c.json({
@@ -415,7 +415,7 @@ app.post(
                 requesterUsername: currentUser?.username, // Username of User A
             };
             // Notify the target user (User B)
-            notifyUser(c, targetUserId, payload); // Calls the helper to send push
+            await notifyUser(c, targetUserId, payload); // Calls the helper to send push
             // --- End Notification ---
 
             return c.json({
@@ -528,7 +528,7 @@ app.post("/accept/:requestId", jwtMiddleware, async (c) => {
             accepterUsername: accepter?.username, // Username of User B
         };
         // Notify the original requester (User A)
-        notifyUser(c, requesterId, payload); // Calls the helper to send push
+        await notifyUser(c, requesterId, payload); // Calls the helper to send push
         // --- End Notification ---
 
         return c.json({ success: true, message: "Friend request accepted" });
