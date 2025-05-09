@@ -8,6 +8,7 @@
   ],
   "vars": {
     "APNS_ENVIRONMENT": "development",
+    "APPLE_BUNDLE_ID": "com.yoshi.TemanNongki"
   },
   // "kv_namespaces": [
   //   {
