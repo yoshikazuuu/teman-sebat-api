@@ -84,7 +84,7 @@ app.post("/start", jwtMiddleware, async (c) => {
             return c.json(
                 {
                     success: false,
-                    error: "You already have an active smoking session",
+                    error: "You already have an active nongki session",
                     sessionId: activeSession.id,
                 },
                 400,
@@ -98,7 +98,7 @@ app.post("/start", jwtMiddleware, async (c) => {
             .returning({ id: smokingSessions.id });
 
         if (!result || result.length === 0) {
-            throw new Error("Failed to create smoking session record.");
+            throw new Error("Failed to create nongki session record.");
         }
         const sessionId = result[0].id;
 
@@ -152,7 +152,7 @@ app.post("/start", jwtMiddleware, async (c) => {
         return c.json({
             success: true,
             sessionId,
-            message: "Smoking session started.",
+            message: "Nongki session started.",
             notifications: {
                 attempted: friendsToNotifyCount,
                 successful: notificationSuccessCount,
@@ -160,9 +160,9 @@ app.post("/start", jwtMiddleware, async (c) => {
             },
         });
     } catch (error: any) {
-        console.error("Start Smoking Session Error:", error);
+        console.error("Start Nongki Session Error:", error);
         return c.json(
-            { success: false, error: "Failed to start smoking session" },
+            { success: false, error: "Failed to start nongki session" },
             500,
         );
     }
@@ -332,7 +332,7 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
                     aps: {
                         alert: {
                             // Title is optional, body is sufficient
-                            body: `${userName} has ended their smoking session.`,
+                            body: `${userName} has ended their nongki session.`,
                         },
                         sound: "default",
                     },
@@ -379,9 +379,9 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
             },
         });
     } catch (error) {
-        console.error(`End Smoking Session Error (Session ID: ${sessionId}):`, error);
+        console.error(`End Nongki Session Error (Session ID: ${sessionId}):`, error);
         return c.json(
-            { success: false, error: "Failed to end smoking session" },
+            { success: false, error: "Failed to end nongki session" },
             500,
         );
     }

@@ -228,8 +228,8 @@ export const notifyFriendsOfSession = async (
     const payload: ApnsPayload = {
         aps: {
             alert: {
-                title: "Smoking Session Started",
-                body: `${initiatorName} has started a smoking session!`,
+                title: "Nongki Session Started",
+                body: `${initiatorName} has started a nongki session!`,
             },
             sound: "default",
             // badge: 1, // Badge handling is complex, often better client-side
