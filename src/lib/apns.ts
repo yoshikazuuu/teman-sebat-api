@@ -35,6 +35,22 @@ const getApnsServer = (environment: "development" | "production"): string => {
         : "https://api.push.apple.com";
 };
 
+/**
+ * Decodes a Base64 encoded APNS private key to PEM format
+ * @param base64Key The Base64 encoded private key
+ * @returns The decoded private key in PEM format
+ */
+const decodeApnsPrivateKey = (base64Key: string): string => {
+    try {
+        // Decode the Base64 string to get the PEM content
+        const decodedKey = atob(base64Key);
+        return decodedKey;
+    } catch (error: any) {
+        console.error("Failed to decode Base64 APNS private key:", error);
+        throw new Error(`APNS private key decode failed: ${error.message}`);
+    }
+};
+
 const generateApnsAuthToken = async (config: ApnsConfig): Promise<string> => {
     try {
         // Ensure newline characters are correctly interpreted
@@ -128,10 +144,13 @@ export const sendPushNotifications = async (
         return { successCount: 0, failureCount: 0 };
     }
 
+    // Decode the Base64 private key
+    const decodedPrivateKey = decodeApnsPrivateKey(env.APNS_PRIVATE_KEY_BASE64);
+
     const config: ApnsConfig = {
         keyId: env.APNS_KEY_ID,
         teamId: env.APNS_TEAM_ID,
-        privateKey: env.APNS_PRIVATE_KEY,
+        privateKey: decodedPrivateKey,
         topic: env.APPLE_BUNDLE_ID,
         environment: env.APNS_ENVIRONMENT,
     };
@@ -202,7 +221,7 @@ export const sendPushNotifications = async (
             console.log("Failed tokens (first 5):", failedTokens.slice(0, 5));
         }
         return { successCount, failureCount };
-    } catch (error) {
+    } catch (error: any) {
         // Catch errors during token generation or other setup
         console.error("Failed to send APNS notifications batch:", error);
         return { successCount: 0, failureCount: deviceTokens.length };

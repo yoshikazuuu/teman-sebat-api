@@ -12,7 +12,7 @@ export type AppEnv = {
         // --- APNS Configuration ---
         APNS_KEY_ID: string; // Your APNS Auth Key ID
         APNS_TEAM_ID: string; // Your Apple Developer Team ID
-        APNS_PRIVATE_KEY: string; // The content of your .p8 private key file
+        APNS_PRIVATE_KEY_BASE64: string; // Base64 encoded content of your .p8 private key file
         APNS_ENVIRONMENT: "development" | "production"; // 'development' for sandbox, 'production' for production
     };
     Variables: {

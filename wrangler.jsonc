@@ -26,7 +26,8 @@
     {
       "binding": "DB",
       "database_name": "teman-sebat",
-      "database_id": "5d991b73-67af-4a7e-969b-be666780c431"
+      "database_id": "5d991b73-67af-4a7e-969b-be666780c431",
+      "migrations_dir": "drizzle"
     }
   ],
   // "ai": {
