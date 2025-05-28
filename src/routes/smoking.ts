@@ -141,6 +141,15 @@ app.post("/start", jwtMiddleware, async (c) => {
                 console.log(
                     `Session start notification result: ${notificationSuccessCount} success, ${notificationFailureCount} failed.`,
                 );
+
+                // Log invalid tokens for potential cleanup
+                if (notificationResult.invalidTokens.length > 0) {
+                    console.log(
+                        `Found ${notificationResult.invalidTokens.length} invalid device tokens during session start notification that should be removed from database.`
+                    );
+                    // TODO: Implement automatic cleanup of invalid tokens
+                    // await cleanupInvalidTokens(db, notificationResult.invalidTokens);
+                }
             }
         } else {
             console.log(
@@ -356,6 +365,15 @@ app.post("/end/:sessionId", jwtMiddleware, async (c) => {
                 console.log(
                     `Session end notification result: ${notificationSuccessCount} success, ${notificationFailureCount} failed.`,
                 );
+
+                // Log invalid tokens for potential cleanup
+                if (notificationResult.invalidTokens.length > 0) {
+                    console.log(
+                        `Found ${notificationResult.invalidTokens.length} invalid device tokens during session end notification that should be removed from database.`
+                    );
+                    // TODO: Implement automatic cleanup of invalid tokens
+                    // await cleanupInvalidTokens(db, notificationResult.invalidTokens);
+                }
             } else {
                 console.error(
                     `Could not find user ${userId} for session end notification details.`,
@@ -547,6 +565,15 @@ app.post(
                         console.log(
                             `Response notification result for owner ${ownerId}: ${result.successCount} success, ${result.failureCount} failed.`,
                         );
+
+                        // Log invalid tokens for potential cleanup
+                        if (result.invalidTokens.length > 0) {
+                            console.log(
+                                `Found ${result.invalidTokens.length} invalid device tokens for session owner ${ownerId} that should be removed from database.`
+                            );
+                            // TODO: Implement automatic cleanup of invalid tokens
+                            // await cleanupInvalidTokens(db, result.invalidTokens);
+                        }
                     } catch (err) {
                         console.error(
                             `Error awaiting response notification to owner ${ownerId}:`,

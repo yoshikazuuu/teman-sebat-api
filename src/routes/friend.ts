@@ -54,6 +54,15 @@ const notifyUser = async (
                 console.log(
                     `Friend notification result for user ${recipientId}: ${result.successCount} success, ${result.failureCount} failed.`,
                 );
+
+                // Log invalid tokens for potential cleanup
+                if (result.invalidTokens.length > 0) {
+                    console.log(
+                        `Found ${result.invalidTokens.length} invalid device tokens for user ${recipientId} that should be removed from database.`
+                    );
+                    // TODO: Implement automatic cleanup of invalid tokens
+                    // await cleanupInvalidTokens(db, result.invalidTokens);
+                }
             } catch (err) {
                 console.error(
                     `Error sending friend notification to user ${recipientId}:`,

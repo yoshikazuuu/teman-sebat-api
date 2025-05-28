@@ -13,6 +13,7 @@ export type AppEnv = {
         APNS_TEAM_ID: string; // Your Apple Developer Team ID
         APNS_PRIVATE_KEY: string; // The content of your .p8 private key file
         APNS_ENVIRONMENT: "development" | "production"; // 'development' for sandbox, 'production' for production
+        APNS_USE_PORT_2197?: string; // Optional: Set to "true" or "1" to use port 2197 by default
     };
     Variables: {
         db: DB;

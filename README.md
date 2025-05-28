@@ -188,3 +188,76 @@ This project is licensed under the MIT License.
 ---
 
 **Built with ❤️ using Bun and modern web technologies**
+
+# APNS Configuration
+
+The application supports Apple Push Notification service (APNs) with enhanced reliability and network compatibility features.
+
+## Environment Variables
+
+### Required APNS Variables
+- `APNS_KEY_ID`: Your APNS Auth Key ID from Apple Developer Console
+- `APNS_TEAM_ID`: Your Apple Developer Team ID
+- `APNS_PRIVATE_KEY`: The content of your .p8 private key file (with \n for newlines)
+- `APNS_ENVIRONMENT`: Either "development" (sandbox) or "production"
+- `APPLE_BUNDLE_ID`: Your iOS app's bundle identifier
+
+### Optional APNS Variables
+- `APNS_USE_PORT_2197`: Set to "true" or "1" to use port 2197 by default instead of port 443
+
+## APNS Network Reliability Features
+
+### Port 2197 Support
+Apple recommends using port 2197 instead of port 443 for APNs in certain network environments:
+- Corporate firewalls that block HTTPS traffic
+- Networks with proxy servers
+- Local development environments with network restrictions
+
+The application automatically falls back to port 2197 when port 443 fails with network connectivity issues.
+
+### Automatic Retry Logic
+- **Default behavior**: Try port 443 first, then retry with port 2197 on network failures
+- **Configurable retries**: Up to 2 retry attempts with 1-second delays
+- **Smart error handling**: Distinguishes between network errors (retryable) and APNS errors (non-retryable)
+- **Invalid token tracking**: Automatically identifies and logs invalid device tokens for cleanup
+
+### Network Error Types That Trigger Port Fallback
+- `Malformed_HTTP_Response` errors
+- General fetch/network connection failures
+- Connection timeout issues
+
+## Usage Examples
+
+### Force Port 2197 (if you have network issues with port 443)
+Set the environment variable:
+```bash
+APNS_USE_PORT_2197=true
+```
+
+### Manual Testing
+If you're experiencing connectivity issues, you can test both ports:
+
+1. **Test with default configuration** (port 443 first, fallback to 2197):
+   - Leave `APNS_USE_PORT_2197` unset or set to "false"
+   - The system will automatically try port 2197 if port 443 fails
+
+2. **Test with port 2197 first**:
+   - Set `APNS_USE_PORT_2197=true`
+   - The system will start with port 2197 and fallback to port 443 if needed
+
+## Troubleshooting APNS Connectivity
+
+If you see errors like "Malformed_HTTP_Response" in your logs:
+
+1. **Check your network**: Corporate firewalls often block port 443 for non-browser traffic
+2. **Try port 2197**: Set `APNS_USE_PORT_2197=true` in your environment
+3. **Verify credentials**: Ensure your APNS key, team ID, and environment are correct
+4. **Check device tokens**: Invalid tokens will be logged and should be removed from your database
+
+## Local Development
+
+When developing locally, you may encounter network issues with Apple's servers. The automatic port fallback should resolve most connectivity problems. If issues persist:
+
+1. Check your local firewall settings
+2. Try using port 2197 by setting the environment variable
+3. Verify your internet connection allows outbound HTTPS on both ports 443 and 2197
