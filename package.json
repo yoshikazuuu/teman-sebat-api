@@ -8,7 +8,9 @@
     "db:migrate": "bun drizzle-kit migrate --config=drizzle.local.config.ts",
     "db:generate": "bun drizzle-kit generate --config=drizzle.local.config.ts",
     "db:init": "./scripts/init-db.sh",
-    "db:studio": "bun drizzle-kit studio --config=drizzle.local.config.ts"
+    "db:studio": "bun drizzle-kit studio --config=drizzle.local.config.ts",
+    "docker:build": "docker build -t teman-sebat-api .",
+    "docker:run": "docker run -p 3000:3000 teman-sebat-api"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.3",
