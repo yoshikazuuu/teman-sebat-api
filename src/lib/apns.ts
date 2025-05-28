@@ -1,5 +1,6 @@
 // src/lib/apns.ts
 import * as jose from "jose";
+import apn from "node-apn";
 import type { AppEnv } from "../types";
 
 // --- Interfaces ---
@@ -37,13 +38,13 @@ export interface ApnsOptions {
 }
 
 // --- Helper functions ---
-const getApnsServer = (environment: "development" | "production", usePort2197: boolean = false): string => {
-    const baseServer = environment === "development"
+const getApnsServer = (environment: "development" | "production", usePort2197: boolean = false): { hostname: string; port: number } => {
+    const hostname = environment === "development"
         ? "api.sandbox.push.apple.com"
         : "api.push.apple.com";
 
-    const port = usePort2197 ? "2197" : "443";
-    return `https://${baseServer}:${port}`;
+    const port = usePort2197 ? 2197 : 443;
+    return { hostname, port };
 };
 
 const generateApnsAuthToken = async (config: ApnsConfig): Promise<string> => {
@@ -65,9 +66,55 @@ const generateApnsAuthToken = async (config: ApnsConfig): Promise<string> => {
             .sign(ecPrivateKey);
         return jwt;
     } catch (error: any) {
-        console.error("Failed to generate APNS auth token:", error);
+        console.error("💥 APNS: JWT token generation failed:", error.message);
         throw new Error(`APNS Auth Token generation failed: ${error.message}`);
     }
+};
+
+const createApnProvider = (config: ApnsConfig, usePort2197: boolean = false): apn.Provider => {
+    // Properly format the private key with line breaks
+    const rawKey = config.privateKey;
+    let formattedKey = rawKey;
+
+    // If the key doesn't have proper line breaks, format it
+    if (!rawKey.includes('\n') || rawKey.split('\n').length <= 2) {
+        // Extract header, body, and footer
+        const beginMarker = '-----BEGIN PRIVATE KEY-----';
+        const endMarker = '-----END PRIVATE KEY-----';
+
+        const beginIndex = rawKey.indexOf(beginMarker);
+        const endIndex = rawKey.indexOf(endMarker);
+
+        if (beginIndex !== -1 && endIndex !== -1) {
+            const header = beginMarker;
+            const footer = endMarker;
+            const keyBody = rawKey.substring(beginIndex + beginMarker.length, endIndex).replace(/\s/g, '');
+
+            // Split the key body into 64-character lines
+            const lines = [];
+            for (let i = 0; i < keyBody.length; i += 64) {
+                lines.push(keyBody.substring(i, i + 64));
+            }
+
+            formattedKey = [header, ...lines, footer].join('\n');
+        }
+    }
+
+    const options: any = {
+        token: {
+            key: formattedKey,
+            keyId: config.keyId,
+            teamId: config.teamId
+        },
+        production: config.environment === "production"
+    };
+
+    // Use port 2197 if specified
+    if (usePort2197) {
+        options.port = 2197;
+    }
+
+    return new apn.Provider(options);
 };
 
 // Generate a UUID for apns-id if not provided
@@ -89,17 +136,17 @@ const determinePushType = (payload: ApnsPayload, explicitType?: string): string 
 };
 
 // Determine priority based on push type and payload
-const determinePriority = (pushType: string, payload: ApnsPayload, explicitPriority?: string): string => {
-    if (explicitPriority) return explicitPriority;
+const determinePriority = (pushType: string, payload: ApnsPayload, explicitPriority?: string): number => {
+    if (explicitPriority) return parseInt(explicitPriority);
 
     switch (pushType) {
         case "background":
-            return "5"; // Background notifications must use priority 5
+            return 5; // Background notifications must use priority 5
         case "alert":
             // Use 10 for immediate delivery, 5 for power considerations
-            return payload.aps.alert ? "10" : "5";
+            return payload.aps.alert ? 10 : 5;
         default:
-            return "10";
+            return 10;
     }
 };
 
@@ -120,7 +167,7 @@ export const sendApnsNotification = async (
     config: ApnsConfig,
     deviceToken: string,
     payload: ApnsPayload,
-    authToken: string,
+    authToken: string, // Not needed for node-apn, kept for API compatibility
     options: ApnsOptions = {},
     retryConfig: RetryConfig = defaultRetryConfig,
     startWithPort2197: boolean = false,
@@ -128,28 +175,6 @@ export const sendApnsNotification = async (
     const pushType = determinePushType(payload, options.pushType);
     const priority = determinePriority(pushType, payload, options.priority);
     const apnsId = options.apnsId || generateApnsId();
-
-    // Build headers according to Apple's specification
-    const headers: Record<string, string> = {
-        "authorization": `bearer ${authToken}`,
-        "apns-topic": config.topic,
-        "apns-push-type": pushType,
-        "apns-priority": priority,
-        "apns-id": apnsId,
-        "Content-Type": "application/json",
-    };
-
-    // Add optional headers
-    if (options.expiration !== undefined) {
-        headers["apns-expiration"] = options.expiration.toString();
-    }
-
-    if (options.collapseId) {
-        if (options.collapseId.length > 64) {
-            throw new Error("apns-collapse-id must not exceed 64 bytes");
-        }
-        headers["apns-collapse-id"] = options.collapseId;
-    }
 
     // Validate payload size (4KB for regular notifications, 5KB for VoIP)
     const payloadString = JSON.stringify(payload);
@@ -160,7 +185,7 @@ export const sendApnsNotification = async (
 
     // Validate background notification requirements
     if (pushType === "background") {
-        if (priority !== "5") {
+        if (priority !== 5) {
             throw new Error("Background notifications must use priority 5");
         }
         if (payload.aps["content-available"] !== 1) {
@@ -175,38 +200,91 @@ export const sendApnsNotification = async (
     let usePort2197 = startWithPort2197; // Start with the requested port
 
     for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
-        const server = getApnsServer(config.environment, usePort2197);
-        const url = `${server}/3/device/${deviceToken}`;
         const portText = usePort2197 ? "2197" : "443";
 
-        console.log(`Sending APNS to ${shortToken} (type: ${pushType}, priority: ${priority}, id: ${apnsId}, port: ${portText}, attempt: ${attempt + 1})`);
+        console.log(`📱 APNS: Sending to ${shortToken} | Type: ${pushType} | Priority: ${priority} | Port: ${portText} | Attempt: ${attempt + 1}/${retryConfig.maxRetries + 1}`);
 
         try {
-            const response = await fetch(url, {
-                method: "POST",
-                headers: headers,
-                body: payloadString,
+            // Create provider for this attempt
+            const provider = createApnProvider(config, usePort2197);
+
+            // Create notification
+            const notification = new apn.Notification();
+            notification.topic = config.topic;
+            notification.id = apnsId;
+            notification.priority = priority;
+            notification.pushType = pushType;
+
+            // Set expiration if provided
+            if (options.expiration !== undefined) {
+                notification.expiry = Math.floor(options.expiration);
+            }
+
+            // Set collapse ID if provided
+            if (options.collapseId) {
+                if (options.collapseId.length > 64) {
+                    throw new Error("apns-collapse-id must not exceed 64 bytes");
+                }
+                notification.collapseId = options.collapseId;
+            }
+
+            // Set the payload - node-apn has different API
+            if (typeof payload.aps.alert === 'object' && payload.aps.alert) {
+                notification.alert = {
+                    title: payload.aps.alert.title || "",
+                    body: payload.aps.alert.body || ""
+                };
+            } else if (typeof payload.aps.alert === 'string') {
+                notification.alert = payload.aps.alert;
+            }
+
+            if (payload.aps.sound) {
+                notification.sound = payload.aps.sound;
+            }
+            if (payload.aps.badge !== undefined) {
+                notification.badge = payload.aps.badge;
+            }
+            if (payload.aps["content-available"] !== undefined) {
+                notification.contentAvailable = payload.aps["content-available"] === 1;
+            }
+            if (payload.aps["mutable-content"] !== undefined) {
+                notification.mutableContent = payload.aps["mutable-content"] === 1;
+            }
+
+            // Add custom data
+            Object.keys(payload).forEach(key => {
+                if (key !== 'aps') {
+                    notification.payload[key] = payload[key];
+                }
             });
 
-            if (!response.ok) {
-                const responseBody = await response.text();
-                let reason = "Unknown";
-                try {
-                    const errorData = JSON.parse(responseBody);
-                    reason = errorData.reason || reason;
-                } catch {
-                    // If response body is not JSON, use status text
-                    reason = response.statusText;
-                }
+            // Send notification
+            const result = await provider.send(notification, deviceToken);
 
-                console.error(
-                    `APNS request failed for token ${shortToken} (port ${portText}): ${response.status} ${response.statusText} - Reason: ${reason}`,
-                );
+            // Close the provider
+            provider.shutdown();
+
+            // Check if successful
+            if (result.sent.length > 0) {
+                console.log(`✅ APNS: Success for ${shortToken} | ID: ${apnsId} | Port: ${portText}`);
+
+                // Create a Response-like object for compatibility
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: "OK"
+                } as unknown as Response;
+            } else if (result.failed.length > 0) {
+                const failure = result.failed[0];
+                const reason = (failure as any).response?.reason || "Unknown";
+                const status = (failure as any).status || "Unknown";
+
+                console.error(`❌ APNS: Failed for ${shortToken} | Status: ${status} | Reason: ${reason} | Port: ${portText}`);
 
                 // Create detailed error for specific APNS error codes
-                const error = new Error(`APNS Error ${response.status}: ${reason}`);
+                const error = new Error(`APNS Error ${status}: ${reason}`);
                 (error as any).apnsReason = reason;
-                (error as any).statusCode = response.status;
+                (error as any).statusCode = status;
                 (error as any).deviceToken = deviceToken;
                 (error as any).apnsId = apnsId;
                 (error as any).port = portText;
@@ -214,34 +292,33 @@ export const sendApnsNotification = async (
                 throw error;
             }
 
-            console.log(`APNS Success for token ${shortToken}: ${response.status} (id: ${apnsId}, port: ${portText})`);
-            return response;
         } catch (error: any) {
             lastError = error;
 
             // If this is an APNS error (not a network error), don't retry
             if (error.apnsReason) {
-                console.error(`APNS error for token ${shortToken} (port ${portText}): ${error.message}`);
+                console.error(`🚫 APNS: Service error for ${shortToken} | ${error.message} | Port: ${portText}`);
                 throw error;
             }
 
             // Check if this is a network connectivity error that might benefit from port fallback
-            const isNetworkError = error.message?.includes('Malformed_HTTP_Response') ||
-                error.message?.includes('fetch') ||
+            const isNetworkError = error.message?.includes('ECONNREFUSED') ||
+                error.message?.includes('ENOTFOUND') ||
+                error.message?.includes('ETIMEDOUT') ||
                 error.message?.includes('network') ||
                 error.message?.includes('connection') ||
-                error.code === 'Malformed_HTTP_Response';
+                error.code === 'ECONNREFUSED';
 
-            console.error(`APNS fetch failed for token ${shortToken} (port ${portText}):`, error.message || error);
+            console.warn(`⚠️  APNS: Network error for ${shortToken} | ${error.message} | Port: ${portText}`);
 
             // If we should try the other port and this is a network error, and we haven't tried both ports yet
             if (retryConfig.tryPort2197OnFailure && isNetworkError && attempt < retryConfig.maxRetries) {
                 // Toggle to the other port
                 if (!usePort2197) {
-                    console.log(`Retrying with port 2197 for token ${shortToken}...`);
+                    console.log(`🔄 APNS: Retrying ${shortToken} with port 2197...`);
                     usePort2197 = true;
                 } else {
-                    console.log(`Retrying with port 443 for token ${shortToken}...`);
+                    console.log(`🔄 APNS: Retrying ${shortToken} with port 443...`);
                     usePort2197 = false;
                 }
                 // Add a small delay before retry
@@ -264,7 +341,7 @@ export const sendApnsNotification = async (
     }
 
     // If we get here, all retries failed
-    console.error(`All APNS retry attempts failed for token ${shortToken}`);
+    console.error(`💥 APNS: All retries exhausted for ${shortToken} | Final error: ${lastError?.message}`);
 
     // Wrap the final network error
     const wrappedError = new Error(`APNS Network Error (all retries failed): ${lastError?.message || 'Unknown error'}`);
@@ -300,14 +377,16 @@ export const sendPushNotifications = async (
     errors: Array<{ token: string; error: string; reason?: string }>;
 }> => {
     if (!deviceTokens || deviceTokens.length === 0) {
-        console.log("No device tokens provided for notification.");
+        console.log("📱 APNS: No device tokens provided for notification");
         return { successCount: 0, failureCount: 0, invalidTokens: [], errors: [] };
     }
+
+    console.log(`📱 APNS: Starting batch send to ${deviceTokens.length} device(s) | Environment: ${env.APNS_ENVIRONMENT}`);
 
     const config: ApnsConfig = {
         keyId: env.APNS_KEY_ID,
         teamId: env.APNS_TEAM_ID,
-        privateKey: env.APNS_PRIVATE_KEY,
+        privateKey: Buffer.from(env.APNS_PRIVATE_KEY_BASE64, 'base64').toString('utf-8'),
         topic: env.APPLE_BUNDLE_ID,
         environment: env.APNS_ENVIRONMENT as "development" | "production",
     };
@@ -315,7 +394,7 @@ export const sendPushNotifications = async (
     // Check if we should use port 2197 by default (can be overridden by retryConfig)
     const forcePort2197 = env.APNS_USE_PORT_2197 === "true" || env.APNS_USE_PORT_2197 === "1";
     if (forcePort2197) {
-        console.log("Using APNS port 2197 by default (APNS_USE_PORT_2197 environment variable set)");
+        console.log("🔧 APNS: Using port 2197 by default (APNS_USE_PORT_2197 environment variable set)");
     }
 
     // Validate essential config
@@ -325,16 +404,13 @@ export const sendPushNotifications = async (
         !config.privateKey ||
         !config.topic
     ) {
-        console.error(
-            "APNS configuration missing in environment variables.",
-            {
-                keyId: !!config.keyId,
-                teamId: !!config.teamId,
-                privateKey: !!config.privateKey,
-                topic: !!config.topic,
-                environment: config.environment,
-            },
-        );
+        console.error("❌ APNS: Configuration missing in environment variables", {
+            keyId: !!config.keyId,
+            teamId: !!config.teamId,
+            privateKey: !!config.privateKey,
+            topic: !!config.topic,
+            environment: config.environment,
+        });
         return {
             successCount: 0,
             failureCount: deviceTokens.length,
@@ -380,7 +456,7 @@ export const sendPushNotifications = async (
                     // Mark tokens as invalid for specific errors
                     if (['BadDeviceToken', 'Unregistered', 'DeviceTokenNotForTopic'].includes(reason)) {
                         invalidTokens.push(token);
-                        console.log(`Marking token ${shortToken} as invalid (reason: ${reason})`);
+                        console.warn(`🚮 APNS: Marking token ${shortToken} as invalid | Reason: ${reason}`);
                     }
 
                     errors.push({
@@ -394,29 +470,26 @@ export const sendPushNotifications = async (
                         error: error?.message || 'Unknown error'
                     });
                 }
-
-                console.error(
-                    `Failed to send APNS to token ${shortToken}:`,
-                    error?.message || error,
-                );
             }
         });
 
-        console.log(
-            `APNS Batch Send Results: ${successCount} succeeded, ${failureCount} failed.`,
-        );
-        if (failureCount > 0) {
-            console.log(`Failed tokens (first 5): ${invalidTokens.slice(0, 5).map(t =>
-                `${t.substring(0, 5)}...${t.substring(t.length - 5)}`).join(', ')}`);
+        // Summary logging
+        if (successCount > 0 && failureCount === 0) {
+            console.log(`✅ APNS: Batch complete | ${successCount}/${deviceTokens.length} succeeded`);
+        } else if (successCount > 0 && failureCount > 0) {
+            console.warn(`⚠️  APNS: Batch partial success | ${successCount}/${deviceTokens.length} succeeded, ${failureCount} failed`);
+        } else {
+            console.error(`❌ APNS: Batch failed | 0/${deviceTokens.length} succeeded, ${failureCount} failed`);
         }
+
         if (invalidTokens.length > 0) {
-            console.log(`Invalid tokens found: ${invalidTokens.length} (should be removed from database)`);
+            console.warn(`🗑️  APNS: Found ${invalidTokens.length} invalid token(s) that should be removed from database`);
         }
 
         return { successCount, failureCount, invalidTokens, errors };
     } catch (error) {
         // Catch errors during token generation or other setup
-        console.error("Failed to send APNS notifications batch:", error);
+        console.error("💥 APNS: Batch processing failed during setup:", error);
         return {
             successCount: 0,
             failureCount: deviceTokens.length,
@@ -447,8 +520,11 @@ export const notifyFriendsOfSession = async (
     invalidTokens: string[];
     errors: Array<{ token: string; error: string; reason?: string }>;
 }> => {
-    // Construct the specific payload for a new session
     const initiatorName = initiator.fullName || initiator.username;
+
+    console.log(`🎯 APNS: Starting session notification | Session: ${sessionId} | Initiator: ${initiatorName} | Recipients: ${deviceTokens.length}`);
+
+    // Construct the specific payload for a new session
     const payload: ApnsPayload = {
         aps: {
             alert: {
@@ -473,5 +549,9 @@ export const notifyFriendsOfSession = async (
     };
 
     // Use the generic sender
-    return sendPushNotifications(env, deviceTokens, payload, options);
+    const result = await sendPushNotifications(env, deviceTokens, payload, options);
+
+    console.log(`🎯 APNS: Session notification complete | Session: ${sessionId} | Success: ${result.successCount}/${deviceTokens.length}`);
+
+    return result;
 };

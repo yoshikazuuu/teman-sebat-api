@@ -122,7 +122,7 @@ JWT_SECRET=your-super-secret-jwt-key
 # Apple Push Notification Service (APNS)
 APNS_KEY_ID=your-apns-key-id
 APNS_TEAM_ID=your-apple-team-id
-APNS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+APNS_PRIVATE_KEY_BASE64=LS0tLS1CRUdJTi...your-base64-encoded-p8-key...FRSVZBVEUgS0VZLS0tLS0=
 APPLE_BUNDLE_ID=your.app.bundle.id
 APNS_ENVIRONMENT=development
 ```
@@ -198,7 +198,7 @@ The application supports Apple Push Notification service (APNs) with enhanced re
 ### Required APNS Variables
 - `APNS_KEY_ID`: Your APNS Auth Key ID from Apple Developer Console
 - `APNS_TEAM_ID`: Your Apple Developer Team ID
-- `APNS_PRIVATE_KEY`: The content of your .p8 private key file (with \n for newlines)
+- `APNS_PRIVATE_KEY_BASE64`: The base64-encoded content of your .p8 private key file
 - `APNS_ENVIRONMENT`: Either "development" (sandbox) or "production"
 - `APPLE_BUNDLE_ID`: Your iOS app's bundle identifier
 

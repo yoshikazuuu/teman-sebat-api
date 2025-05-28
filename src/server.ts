@@ -27,7 +27,7 @@ const requiredEnvVars = [
   'APPLE_BUNDLE_ID',
   'APNS_KEY_ID',
   'APNS_TEAM_ID',
-  'APNS_PRIVATE_KEY',
+  'APNS_PRIVATE_KEY_BASE64',
   'APNS_ENVIRONMENT'
 ]
 
@@ -103,7 +103,7 @@ const bindings: AppEnv['Bindings'] = {
   APPLE_BUNDLE_ID: process.env.APPLE_BUNDLE_ID!,
   APNS_KEY_ID: process.env.APNS_KEY_ID!,
   APNS_TEAM_ID: process.env.APNS_TEAM_ID!,
-  APNS_PRIVATE_KEY: process.env.APNS_PRIVATE_KEY!,
+  APNS_PRIVATE_KEY_BASE64: process.env.APNS_PRIVATE_KEY_BASE64!,
   APNS_ENVIRONMENT: process.env.APNS_ENVIRONMENT as 'development' | 'production'
 }
 
