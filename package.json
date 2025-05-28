@@ -10,7 +10,7 @@
     "db:init": "./scripts/init-db.sh",
     "db:studio": "bun drizzle-kit studio --config=drizzle.local.config.ts",
     "docker:build": "docker build -t teman-sebat-api .",
-    "docker:run": "docker run -p 3000:3000 teman-sebat-api"
+    "docker:run": "docker run -p 3000:3000 --env-file .env teman-sebat-api"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.3",
