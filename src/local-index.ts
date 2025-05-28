@@ -1,8 +1,10 @@
+// src/local-index.ts
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
-import { createDbClient } from "./db";
-import { AppEnv } from "./types";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import * as schema from "./db/schema";
 
 // Import route handlers
 import authRoutes from "./routes/auth";
@@ -10,16 +12,28 @@ import userRoutes from "./routes/user";
 import friendRoutes from "./routes/friend";
 import smokingRoutes from "./routes/smoking";
 
-// Create the Hono app instance, specifying the Env type
-const app = new Hono<AppEnv>();
+// Create a type for the local environment
+type LocalEnv = {
+  Variables: {
+    db: any;
+    jwtPayload?: {
+      id: number;
+      exp: number;
+      [key: string]: any;
+    };
+    apnsAuthToken?: { token: string; expires: number };
+  };
+};
+
+// Create the Hono app instance with the local environment
+const app = new Hono<LocalEnv>();
 
 // --- Middleware ---
 app.use("*", logger()); // Log all requests
 app.use(
   "*",
   cors({
-    // Configure CORS for your frontend URL in production
-    origin: "*", // Allow all for now, restrict later
+    origin: "*", // Allow all for development
     allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowHeaders: ["Content-Type", "Authorization"],
     exposeHeaders: ["Content-Length", "X-Total-Count"],
@@ -64,24 +78,23 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// --- Database Middleware ---
-// Attach the Drizzle client instance to the context (c.var.db)
-// for easy access in route handlers.
-app.use("*", async (c, next) => {
-  if (!c.env.DB) {
-    console.error("D1 Database binding 'DB' not found in environment.");
-    return c.json({ error: "Internal server error" }, 500);
-  }
+// --- Database Setup ---
+// Initialize SQLite database using Bun's native SQLite and attach to each request
+const initSQLiteDb = (dbPath: string) => {
+  console.log(`Initializing SQLite database at: ${dbPath}`);
+  const sqlite = new Database(dbPath, { create: true });
+  const db = drizzle(sqlite, { schema });
 
-  const db = createDbClient(c.env.DB);
-  // Use c.set to attach the db instance to the context
-  c.set("db", db)
-  await next();
-});
+  // Middleware to attach DB to each request
+  app.use("*", async (c, next) => {
+    c.set('db', db);
+    await next();
+  });
+};
 
 // --- Basic Routes ---
 app.get("/", (c) => {
-  return c.text("👋 Teman Sebat API is running!");
+  return c.text("👋 Teman Sebat API is running locally with Bun SQLite!");
 });
 
 // --- Register Route Handlers ---
@@ -97,5 +110,4 @@ app.onError((err, c) => {
   return c.json({ error: "Internal server error", message: err.message }, 500);
 });
 
-// Export the app for Cloudflare Workers
-export default app;
+export { app, initSQLiteDb };

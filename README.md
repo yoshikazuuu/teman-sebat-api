@@ -1,161 +1,190 @@
-# TemanSebat API
+# 🚬 Teman Sebat API
 
-Backend API for TemanSebat, a social smoking app that allows users to notify friends when they're smoking and receive responses.
+A fast, local-first API for tracking smoking habits and connecting with friends for mutual accountability. Built with **Bun**, **Hono**, and **SQLite**.
 
-## Features
-
-- **Authentication**
-  - Apple Sign-In integration
-  - JWT-based authentication
-
-- **User Management**
-  - Profile creation and updates
-  - Device token registration for push notifications
-
-- **Friend Management**
-  - Search for users
-  - Send, accept, and reject friend requests
-  - View friends and pending requests
-
-- **Smoking Sessions (Core Feature)**
-  - Start and end smoking sessions
-  - Notify friends when a session begins
-  - Respond with "I'll be there", "I've done", or "I'll be there in 5 minutes"
-  - View active sessions from friends
-  - Track session history
-
-## Tech Stack
-
-- **Hono.js** - Lightweight web framework
-- **Cloudflare Workers** - Serverless runtime
-- **Drizzle ORM** - SQL ORM
-- **Cloudflare D1** - Serverless SQL database
-- **TypeScript** - Type-safe JavaScript
-
-## Development
+## ⚡ Quick Start
 
 ### Prerequisites
 
-- Node.js 18+ or Bun 1.0+
-- Cloudflare account
-- Wrangler CLI
+- [Bun](https://bun.sh/) (latest version)
+- Git
 
-### Setup
+### Installation
 
-1. Clone the repository
-2. Install dependencies:
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd teman-sebat-api
+   ```
 
-```bash
-npm install
-# or
-bun install
+2. **Install dependencies**
+   ```bash
+   bun install
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   # Copy the example environment file
+   cp .env.example .env
+   
+   # Edit .env with your configuration
+   vim .env
+   ```
+
+4. **Initialize the database**
+   ```bash
+   bun run db:init
+   ```
+
+5. **Start the development server**
+   ```bash
+   bun run dev
+   ```
+
+The API will be available at `http://localhost:3000`
+
+## 🛠️ Development Commands
+
+| Command | Description |
+|---------|-------------|
+| `bun run dev` | Start development server |
+| `bun run dev:watch` | Start development server with auto-reload |
+| `bun run build` | Build for production |
+| `bun run start` | Start production server |
+| `bun run db:init` | Initialize and migrate database |
+| `bun run db:generate` | Generate new database migrations |
+| `bun run db:migrate` | Run database migrations |
+| `bun run db:studio` | Open Drizzle Studio (database GUI) |
+
+## 🏗️ Architecture
+
+### Tech Stack
+- **Runtime**: [Bun](https://bun.sh/) - Fast JavaScript runtime with built-in SQLite
+- **Framework**: [Hono](https://hono.dev/) - Lightweight web framework
+- **Database**: [Bun SQLite](https://bun.sh/docs/api/sqlite) - Native SQLite driver
+- **ORM**: [Drizzle ORM](https://orm.drizzle.team/) - TypeScript ORM
+- **Validation**: [Zod](https://zod.dev/) - Schema validation
+- **Authentication**: [Jose](https://github.com/panva/jose) - JWT handling
+
+### Project Structure
+```
+src/
+├── db/                 # Database configuration and schema
+│   ├── schema.ts      # Database schema definitions
+│   └── index.ts       # Database client setup
+├── lib/               # Shared utilities and libraries
+├── routes/            # API route handlers
+│   ├── auth.ts       # Authentication endpoints
+│   ├── user.ts       # User management
+│   ├── friend.ts     # Friend/social features
+│   └── smoking.ts    # Smoking tracking
+├── utils/            # Utility functions
+├── types.ts          # TypeScript type definitions
+├── local-index.ts    # Local development app setup
+└── server.ts         # Server entry point
 ```
 
-3. Set up local D1 database:
+## 📊 Database
+
+The application uses **Bun's native SQLite driver** for optimal performance. The database file is stored locally at `./data/teman-sebat.sqlite` by default.
+
+### Schema Management
+
+Migrations are managed with **Drizzle Kit**:
 
 ```bash
-wrangler d1 create teman-sebat
-wrangler d1 execute teman-sebat --local --file=./drizzle/0000_freezing_joseph.sql
+# Generate new migration after schema changes
+bun run db:generate
+
+# Apply migrations
+bun run db:migrate
+
+# Open database GUI
+bun run db:studio
 ```
 
-4. Update the database configuration in `wrangler.jsonc` if needed.
+## 🔧 Configuration
 
-5. Start the development server:
+### Environment Variables
+
+Create a `.env` file with the following variables:
 
 ```bash
-npm run dev
-# or
-bun run dev
+# Database
+DB_PATH=./data/teman-sebat.sqlite
+
+# Server
+PORT=3000
+
+# JWT Configuration
+JWT_SECRET=your-super-secret-jwt-key
+
+# Apple Push Notification Service (APNS)
+APNS_KEY_ID=your-apns-key-id
+APNS_TEAM_ID=your-apple-team-id
+APNS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+APPLE_BUNDLE_ID=your.app.bundle.id
+APNS_ENVIRONMENT=development
 ```
 
-### Database Migrations
-
-Generate schema changes:
-
-```bash
-npx drizzle-kit generate:sqlite
-```
-
-Push schema changes to the database:
-
-```bash
-npx drizzle-kit push:sqlite
-```
-
-## Deployment
-
-1. Configure the JWT secret for production in `wrangler.jsonc` or use Cloudflare's secret manager:
-
-```bash
-wrangler secret put JWT_SECRET
-```
-
-2. Deploy to Cloudflare Workers:
-
-```bash
-npm run deploy
-# or
-bun run deploy
-```
-
-## API Endpoints
+## 🚀 API Endpoints
 
 ### Authentication
+- `POST /auth/apple` - Apple Sign-In authentication
 
-- `POST /auth/apple` - Sign in/up with Apple
+### Users
+- `GET /users/profile` - Get user profile
+- `PUT /users/profile` - Update user profile
+- `POST /users/device-token` - Register device for push notifications
 
-### User Management
+### Friends
+- `GET /friends` - Get friends list
+- `POST /friends/add` - Send friend request
+- `POST /friends/accept` - Accept friend request
+- `DELETE /friends/:friendId` - Remove friend
 
-- `GET /users/profile` - Get current user profile
-- `PATCH /users/profile` - Update user profile
-- `POST /users/devices` - Register device token
-- `DELETE /users/devices/:token` - Delete device token
+### Smoking Tracking
+- `POST /smoking/sessions` - Log smoking session
+- `GET /smoking/sessions` - Get smoking history
+- `POST /smoking/sessions/:sessionId/responses` - Respond to friend's session
 
-### Friend Management
+## ⚡ Performance
 
-- `GET /friends` - Get all friends
-- `GET /friends/requests` - Get pending friend requests
-- `GET /friends/search` - Search for users
-- `POST /friends/request` - Send friend request
-- `POST /friends/accept/:requestId` - Accept friend request
-- `DELETE /friends/reject/:requestId` - Reject friend request
-- `DELETE /friends/:friendshipId` - Remove friend
+This setup leverages **Bun's native SQLite driver**, which is:
+- **3-6x faster** than better-sqlite3
+- **8-9x faster** than other JavaScript SQLite drivers
+- Zero external dependencies for SQLite
+- Built-in TypeScript support
 
-### Smoking Sessions
+## 🔒 Security Features
 
-- `POST /smoking/start` - Start a smoking session
-- `POST /smoking/end/:sessionId` - End a smoking session
-- `GET /smoking/active` - Get active smoking sessions of friends
-- `POST /smoking/respond/:sessionId` - Respond to a smoking session
-- `GET /smoking/responses/:sessionId` - Get responses for a specific session
-- `GET /smoking/history` - Get user's session history
+- JWT-based authentication
+- Apple Sign-In integration
+- Input validation with Zod schemas
+- CORS protection
+- Environment variable validation
 
-## iOS Client Integration
+## 📱 Push Notifications
 
-For the iOS SwiftUI client, implement:
+The API includes **Apple Push Notification Service (APNS)** integration for:
+- Friend request notifications
+- Smoking session alerts
+- Accountability reminders
 
-1. Apple Sign In authentication
-2. Push notifications registration with APNS
-3. UI for friend management
-4. Interface for smoking sessions
-5. Real-time notifications for session updates
+## 🤝 Contributing
 
-## Security
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Run tests and ensure everything works
+5. Commit your changes (`git commit -m 'Add amazing feature'`)
+6. Push to the branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
 
-- Always use HTTPS in production
-- Replace the JWT secret before deployment
-- Consider implementing rate limiting for production
-- Store sensitive values in Cloudflare's secret manager
+## 📝 License
 
-[For generating/synchronizing types based on your Worker configuration run](https://developers.cloudflare.com/workers/wrangler/commands/#types):
+This project is licensed under the MIT License.
 
-```bash
-npm run cf-typegen
-```
+---
 
-Pass the `CloudflareBindings` as generics when instantiation `Hono`:
-
-```ts
-// src/index.ts
-const app = new Hono<{ Bindings: CloudflareBindings }>()
-```
+**Built with ❤️ using Bun and modern web technologies**

@@ -1,11 +1,12 @@
 // src/db/index.ts
-import { drizzle } from "drizzle-orm/d1";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import * as schema from "./schema";
 
-// Function to create the Drizzle client instance
-// It expects the D1 binding from the Cloudflare Worker environment
-export const createDbClient = (d1Binding: D1Database) => {
-    return drizzle(d1Binding, { schema });
+// Function to create the SQLite Drizzle client instance using Bun's native SQLite
+export const createDbClient = (dbPath: string) => {
+  const sqlite = new Database(dbPath, { create: true });
+  return drizzle(sqlite, { schema });
 };
 
 // Export the schema for easy access elsewhere

@@ -2,10 +2,9 @@
 import { Context as HonoContext } from "hono";
 import { DB } from "./db";
 
-// Define the complete application environment
+// Define the complete application environment for local development
 export type AppEnv = {
     Bindings: {
-        DB: D1Database;
         JWT_SECRET: string;
         APPLE_BUNDLE_ID: string; // For Apple Sign In audience check
 
